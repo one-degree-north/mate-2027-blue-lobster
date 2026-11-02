@@ -45,7 +45,7 @@ connections from origins other than its own and the Vite dev server.
 ## Checks
 
 ```sh
-uv run ruff check . && uv run ruff format --check . && uv run mypy src tests modules && uv run pytest
+uv run ruff check . && uv run ruff format --check . && uv run ty check && uv run pytest
 cd ui && pnpm check
 ```
 

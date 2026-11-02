@@ -15,7 +15,6 @@ rovkit = "rovkit.cli:main"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.11",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
@@ -38,6 +37,5 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
 
-[tool.mypy]
-strict = true
-plugins = ["pydantic.mypy"]
+[tool.ty.src]
+include = ["src", "tests", "modules"]

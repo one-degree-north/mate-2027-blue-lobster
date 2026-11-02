@@ -57,7 +57,7 @@ class Recorder:
         self.count += 1
 
     def finish(self) -> None:
-        self._writer.finish()  # type: ignore[no-untyped-call]
+        self._writer.finish()
 
 
 async def record(hub_url: str, path: Path, stop: asyncio.Event) -> None:

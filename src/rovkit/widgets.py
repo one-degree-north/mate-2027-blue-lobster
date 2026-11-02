@@ -54,7 +54,7 @@ class Widget[T]:
 
     def coerce(self, value: Any) -> T:
         """Validate a value from module code or the UI; raise ``ValueError`` if unacceptable."""
-        return value  # type: ignore[no-any-return]
+        return value
 
     def schema(self) -> dict[str, Any]:
         return {"id": self.name, "kind": self.kind, "label": self.label}
