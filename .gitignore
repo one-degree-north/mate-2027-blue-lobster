@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+
+# Node
+node_modules/
+ui/dist/
+
+# Recordings
+*.mcap
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

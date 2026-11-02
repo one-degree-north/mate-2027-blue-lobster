@@ -1,0 +1,126 @@
+# Writing a module
+
+A module is one Python file in `modules/`. It declares widgets (buttons, sliders, readouts, …)
+and implements what they do. The UI builds a panel for it automatically; you never touch
+JavaScript, sockets, or processes.
+
+## 5-minute start
+
+```sh
+cp modules/_template.py modules/depth.py    # lowercase_with_underscores.py
+uv run rovkit run --reload                  # saving the file restarts just your module
+```
+
+Open http://localhost:5173 (dev) or http://localhost:8765 (after `cd ui && pnpm build`).
+
+```python
+import asyncio
+from rovkit import Module, Readout, Slider, Button
+
+
+class Depth(Module):
+    title = "Depth sensor"
+    reading = Readout("Depth", unit="m")
+    offset = Slider(-1, 1, step=0.01, default=0, unit="m")
+    zero = Button("Zero sensor")
+
+    async def on_zero(self):  # runs when the button is clicked
+        self.offset = -self.raw
+
+    async def run(self):  # optional main loop
+        while True:
+            self.raw = await read_sensor()
+            self.reading = self.raw + self.offset  # assigning updates the UI
+            await asyncio.sleep(0.1)
+```
+
+## Rules of the road
+
+- **One `Module` subclass per file** (or per package directory with an `__init__.py`).
+  The file name is the module's id. Names starting with `_` are ignored.
+- **Don't override `__init__`.** Use `on_start` for setup.
+- **Never block the event loop.** `time.sleep`, camera reads, and heavy OpenCV/NumPy work
+  freeze every widget in your module. Use `await asyncio.sleep(...)`, or
+  `await asyncio.to_thread(blocking_function)`.
+- **A crash is not the end.** If `run()` raises, the process exits and the loader restarts
+  it with backoff. The UI shows `crashed` with the last lines of output.
+- **Handlers run one at a time**, in order. Keep them quick; start long work as a task.
+
+## Widgets
+
+| Widget | UI | Read `self.x` | Assign `self.x = …` | Handler |
+|---|---|---|---|---|
+| `Button("label")` | button | – | – | `async def on_x(self)` |
+| `Slider(min, max, step=, default=, unit=)` | slider | float | moves the slider | `async def on_x(self, value)` |
+| `Toggle(default=)` | switch | bool | flips it | `async def on_x(self, value)` |
+| `Readout("label", unit=, default=)` | text | last value | updates it | – |
+| `Plot("label", unit=, window=, y_min=, y_max=)` | scrolling chart | last point | adds a point | – |
+
+Handlers are found by name: `on_<widget>`. A typo (`on_gian`) is an error when the file loads,
+not a silent no-op. Values from the UI are validated and clamped before your code sees them.
+
+Widgets appear in the order you declare them. Widget state is remembered by the hub, so
+refreshing the page never loses it.
+
+## Lifecycle
+
+`on_start()` → `run()` (optional) → `on_stop()`. Open hardware in `on_start`, release it in
+`on_stop`; it runs on Ctrl-C and on restarts.
+
+## Video
+
+```python
+from rovkit.video import encode_jpeg
+
+
+async def run(self):
+    stream = self.video("main")  # name it; the UI lists all streams
+    while True:
+        frame = await asyncio.to_thread(self.capture)  # e.g. an RGB numpy array
+        stream.push_jpeg(
+            encode_jpeg(frame)
+        )  # OpenCV (BGR): cv2.imencode(".jpg", frame)[1].tobytes()
+```
+
+`push_jpeg` is thread-safe and keeps only the newest frame, so a slow network drops frames
+instead of adding delay.
+
+**Draw detections over the video** by publishing normalized (0–1) boxes. The UI draws them
+on a canvas, so no pixels are re-encoded:
+
+```python
+self.publish(
+    "video/main/overlay", {"boxes": [{"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.2, "label": "crab"}]}
+)
+```
+
+The overlay is not frame-locked; it can trail the picture by a frame or two.
+
+## Talking to other modules
+
+Everything is a topic with a JSON value. Publish yours, subscribe to others':
+
+```python
+async def on_start(self):
+    await self.subscribe("modules/depth/state/reading", self.handle_depth)
+
+
+def handle_depth(self, message):  # message.topic, message.data, message.ts
+    ...
+
+
+self.publish("vision/crab_count", 3, retain=True)  # retain=True: late joiners get the last value
+```
+
+`on_<name>` is reserved for widget handlers, so name subscription callbacks something else
+(`handle_depth`, `depth_changed`, …).
+
+## Recording and replay
+
+```sh
+uv run rovkit run --record          # writes recordings/<timestamp>.mcap
+uv run rovkit hub                   # in another terminal: a hub with no modules
+uv run rovkit replay recordings/20261101-101500.mcap --speed 2
+```
+
+MCAP files also open in Foxglove and other MCAP tools.

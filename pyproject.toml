@@ -1,0 +1,43 @@
+[project]
+name = "rovkit"
+version = "0.1.0"
+description = "Module framework and hub for the MATE ROV control UI"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.10",
+    "mcap>=1.6.0",
+    "pillow>=13.0.0",
+    "pydantic>=2.8",
+]
+
+[project.scripts]
+rovkit = "rovkit.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "ty>=0.0.95",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]

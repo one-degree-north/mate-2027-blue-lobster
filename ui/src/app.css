@@ -1,0 +1,49 @@
+:root {
+  --bg: #12161c;
+  --panel: #1a2029;
+  --fg: #e6e9ee;
+  --muted: #8b95a5;
+  --accent: #4aa3ff;
+  --chip: #2a323f;
+  --ok: #2f9e5b;
+  --bad: #c0392b;
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 system-ui, sans-serif;
+}
+
+button,
+select {
+  font: inherit;
+  color: var(--fg);
+  background: var(--chip);
+  border: 1px solid #3a4454;
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled,
+input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.name {
+  color: var(--fg);
+}
