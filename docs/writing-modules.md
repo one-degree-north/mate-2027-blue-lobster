@@ -54,6 +54,7 @@ class Depth(Module):
 | `Slider(min, max, step=, default=, unit=)` | slider | float | moves the slider | `async def on_x(self, value)` |
 | `Toggle(default=)` | switch | bool | flips it | `async def on_x(self, value)` |
 | `Readout("label", unit=, default=)` | text | last value | updates it | – |
+| `Progress("label")` | progress bar | last fraction | sets 0–1 (`None` = unknown) | – |
 | `Plot("label", unit=, window=, y_min=, y_max=)` | scrolling chart | last point | adds a point | – |
 
 Handlers are found by name: `on_<widget>`. A typo (`on_gian`) is an error when the file loads,
@@ -95,6 +96,62 @@ self.publish(
 ```
 
 The overlay is not frame-locked; it can trail the picture by a frame or two.
+
+### Reading video
+
+Frames enter through a *source* (see below). A module reads the newest ones from it:
+
+```python
+import asyncio
+
+from rovkit import Button, Module, Readout
+
+
+class Counter(Module):
+    start_counting = Button("Start")
+    stop_counting = Button("Stop")
+    seen = Readout("Seen", default=0)
+
+    async def on_start_counting(self):
+        self.task = self.spawn(self.count(), "count")  # failures are logged, not lost
+
+    async def on_stop_counting(self):
+        self.task.cancel()
+
+    async def count(self):
+        async with self.frames() as frames:  # leaving the block closes the link
+            out = self.video(self.id)  # our own annotated stream, listed in the UI
+            try:
+                async for jpeg in frames:  # newest frame; a busy module skips frames
+                    annotated = await asyncio.to_thread(self.process, jpeg)  # decode, detect, draw
+                    out.push_jpeg(annotated)
+            finally:
+                await out.close()  # takes the stream off the UI's list
+```
+
+- `self.frames()` reads the stream named by `ROVKIT_SOURCE` (default `camera`);
+  `self.frames("pattern")` reads a specific one.
+- `await frames.next(timeout=1.0)` raises `TimeoutError` if the source goes quiet.
+- A module's streams are removed from the UI when it stops, even without `close()`.
+- Decode with `cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)` (BGR) in a thread.
+
+### Sources
+
+A **source** is where video enters. It runs like a module (own process, restarted if it
+crashes) but has no panel and no widgets. Put it in `sources/` (see `sources/_template.py`):
+
+```python
+class Webcam(Source):
+    async def run(self):
+        stream = self.video("webcam")
+        self.report("live")  # shown in the UI header: "webcam: live"
+        while True:
+            stream.push_jpeg(await grab_jpeg())
+```
+
+For GStreamer, subclass `rovkit.gstreamer.GstSource` and return a `gst-launch-1.0` pipeline
+ending in `jpegenc ! fdsink fd=1` from `pipeline()`; see `sources/gst_camera.py`. It shows a
+"NO SIGNAL" picture when frames stop and restarts the pipeline if it exits.
 
 ## Talking to other modules
 

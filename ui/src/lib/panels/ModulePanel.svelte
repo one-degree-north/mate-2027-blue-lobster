@@ -2,6 +2,7 @@
   import type { HubConnection } from '../hub.svelte'
   import ButtonWidget from '../widgets/ButtonWidget.svelte'
   import PlotWidget from '../widgets/PlotWidget.svelte'
+  import ProgressWidget from '../widgets/ProgressWidget.svelte'
   import ReadoutWidget from '../widgets/ReadoutWidget.svelte'
   import SliderWidget from '../widgets/SliderWidget.svelte'
   import ToggleWidget from '../widgets/ToggleWidget.svelte'
@@ -51,6 +52,8 @@
           />
         {:else if widget.kind === 'readout'}
           <ReadoutWidget schema={widget} value={hub.widgetValue(moduleId, widget.id)} />
+        {:else if widget.kind === 'progress'}
+          <ProgressWidget schema={widget} value={hub.widgetValue(moduleId, widget.id)} />
         {:else if widget.kind === 'plot'}
           <PlotWidget {hub} {moduleId} schema={widget} />
         {/if}

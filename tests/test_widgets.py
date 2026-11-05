@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rovkit import Button, Module, Plot, Readout, Slider, Toggle
+from rovkit import Button, Module, Plot, Progress, Readout, Slider, Toggle
 
 
 def test_slider_clamps_and_snaps_to_step() -> None:
@@ -89,3 +89,28 @@ def test_widgets_are_inherited() -> None:
         extra = Toggle()
 
     assert list(Child._widgets) == ["gain", "extra"]
+
+
+def test_progress_clamps_and_allows_unknown() -> None:
+    progress = Progress()
+    assert progress.initial() == 0.0
+    assert progress.coerce(0.25) == 0.25
+    assert progress.coerce(7) == 1.0
+    assert progress.coerce(-3) == 0.0
+    assert progress.coerce(None) is None
+    assert progress.schema()["kind"] == "progress"
+
+
+@pytest.mark.parametrize("bad", ["50%", True, float("nan"), float("inf"), [0.5]])
+def test_progress_rejects_non_numbers(bad: object) -> None:
+    with pytest.raises(ValueError):
+        Progress().coerce(bad)
+
+
+def test_progress_is_output_only() -> None:
+    with pytest.raises(TypeError, match="output-only"):
+
+        class M(Module):
+            done = Progress()
+
+            async def on_done(self, value: float) -> None: ...

@@ -153,6 +153,30 @@ class Readout(Widget[Any]):
         return super().schema() | {"unit": self.unit}
 
 
+class Progress(Widget[float | None]):
+    """Progress bar: assign a fraction from 0 to 1, or ``None`` for unknown. Output only."""
+
+    kind = "progress"
+
+    def __init__(self, label: str | None = None, *, default: float | None = 0.0) -> None:
+        super().__init__(label)
+        self._default = default
+
+    def initial(self) -> float | None:
+        return self.coerce(self._default)
+
+    def coerce(self, value: Any) -> float | None:
+        if value is None:
+            return None
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"progress {self.name!r} needs a number from 0 to 1, got {value!r}")
+        return min(max(float(value), 0.0), 1.0)
+
+
 class Plot(Widget[float | None]):
     """Scrolling time-series of the values you assign. The UI keeps the last ``window`` points."""
 

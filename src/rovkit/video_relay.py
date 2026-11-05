@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 
 BOUNDARY = "rovkitframe"
 MAX_FRAME_BYTES = 8 * 1024 * 1024
+_GONE = (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR)
 
 
 @dataclass
@@ -54,6 +55,33 @@ class VideoRelay:
                 await stream.publish(msg.data)
             elif msg.type != WSMsgType.CLOSE:
                 log.warning("ignoring non-JPEG data on video ingest")
+        return ws
+
+    async def frames(self, request: web.Request) -> web.StreamResponse:
+        """Send each new frame to a module as one binary message; a busy module skips frames."""
+        stream = self._stream(request)
+        ws = web.WebSocketResponse(heartbeat=15)
+        await ws.prepare(request)
+        seq = 0 if stream.frame is None else stream.seq - 1  # start with the current frame
+        waiting = asyncio.create_task(stream.next_after(seq))
+        listening = asyncio.create_task(ws.receive())  # finishes when the client goes away
+        try:
+            while True:
+                await asyncio.wait({waiting, listening}, return_when=asyncio.FIRST_COMPLETED)
+                if listening.done():
+                    if listening.result().type in _GONE:
+                        break
+                    listening = asyncio.create_task(ws.receive())  # ignore anything else
+                if waiting.done():
+                    frame, seq = waiting.result()
+                    await ws.send_bytes(frame)
+                    waiting = asyncio.create_task(stream.next_after(seq))
+        except ConnectionResetError:
+            pass  # module went away mid-send
+        finally:
+            for task in (waiting, listening):
+                task.cancel()
+            await asyncio.gather(waiting, listening, return_exceptions=True)
         return ws
 
     async def view(self, request: web.Request) -> web.StreamResponse:

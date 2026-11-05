@@ -1,6 +1,6 @@
 /** Reactive WebSocket client for the rovkit hub. Reconnects and re-subscribes on its own. */
 
-import type { ModuleSchema, ModuleStatus } from './types'
+import type { ModuleSchema, ModuleStatus, SourceInfo } from './types'
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
@@ -26,6 +26,7 @@ const MIN_BACKOFF_MS = 250
 const MAX_BACKOFF_MS = 5000
 const SCHEMA_TOPIC = /^modules\/([a-z][a-z0-9_]*)\/schema$/
 const META_TOPIC = /^video\/([a-z][a-z0-9_-]*)\/meta$/
+const SOURCE_TOPIC = /^sources\/([a-z][a-z0-9_]*)\/status$/
 
 function isHubMessage(value: unknown): value is HubMessage {
   if (typeof value !== 'object' || value === null) return false
@@ -42,6 +43,7 @@ export class HubConnection {
 
   moduleIds = $derived(this.#matching(SCHEMA_TOPIC))
   videoStreams = $derived(this.#matching(META_TOPIC))
+  sourceIds = $derived(this.#matching(SOURCE_TOPIC))
 
   readonly #patterns: string[]
   readonly #listeners = new Map<string, Set<Listener>>()
@@ -61,6 +63,14 @@ export class HubConnection {
 
   moduleStatus(moduleId: string): ModuleStatus | undefined {
     return this.topics[`modules/${moduleId}/status`] as ModuleStatus | undefined
+  }
+
+  sourceStatus(sourceId: string): ModuleStatus | undefined {
+    return this.topics[`sources/${sourceId}/status`] as ModuleStatus | undefined
+  }
+
+  sourceInfo(sourceId: string): SourceInfo | undefined {
+    return this.topics[`sources/${sourceId}/info`] as SourceInfo | undefined
   }
 
   widgetValue(moduleId: string, widgetId: string): unknown {
@@ -124,7 +134,9 @@ export class HubConnection {
         console.warn('unexpected frame from hub', frame)
         return
       }
-      this.topics[frame.topic] = frame.data
+      // A retained null means the publisher cleared the topic (e.g. a video stream closed).
+      if (frame.data === null) delete this.topics[frame.topic]
+      else this.topics[frame.topic] = frame.data
       this.#listeners.get(frame.topic)?.forEach((listener) => listener(frame.data))
     }
 

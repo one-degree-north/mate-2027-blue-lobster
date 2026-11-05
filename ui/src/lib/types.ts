@@ -34,7 +34,17 @@ export interface PlotSchema extends WidgetBase {
   yMax: number | null
 }
 
-export type WidgetSchema = ButtonSchema | SliderSchema | ToggleSchema | ReadoutSchema | PlotSchema
+export interface ProgressSchema extends WidgetBase {
+  kind: 'progress'
+}
+
+export type WidgetSchema =
+  | ButtonSchema
+  | SliderSchema
+  | ToggleSchema
+  | ReadoutSchema
+  | ProgressSchema
+  | PlotSchema
 
 export interface ModuleSchema {
   id: string
@@ -47,6 +57,14 @@ export interface ModuleStatus {
   restarts: number
   tail: string[]
   retryIn?: number
+}
+
+/** What a video source reports about itself (`Source.report`). */
+export interface SourceInfo {
+  state: string
+  fps?: number
+  detail?: string
+  code?: number | null
 }
 
 export interface OverlayBox {

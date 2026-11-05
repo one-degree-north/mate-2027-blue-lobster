@@ -6,7 +6,7 @@ import time
 
 from PIL import Image, ImageDraw
 
-from rovkit import Module, Readout, Slider, Toggle
+from rovkit import Source
 from rovkit.video import encode_jpeg
 
 WIDTH, HEIGHT = 640, 360
@@ -42,22 +42,19 @@ def render(frame: int, show_box: bool) -> tuple[bytes, dict[str, float]]:
     return encode_jpeg(image, quality=75), box
 
 
-class PatternCamera(Module):
-    title = "Test camera"
+class PatternCamera(Source):
+    """Stream "pattern": needs no camera, for developing the UI and the modules."""
 
-    fps = Slider(1, 30, step=1, default=15, label="Frame rate", unit="fps")
-    boxes = Toggle(default=True, label="Show detection box")
-    frames = Readout("Frames sent", default=0)
+    fps = 15
 
     async def run(self) -> None:
-        stream = self.video("main")
+        stream = self.video("pattern")
+        self.report("live", fps=self.fps)
         frame = 0
         while True:
             started = time.monotonic()
-            jpeg, box = await asyncio.to_thread(render, frame, self.boxes)
+            jpeg, box = await asyncio.to_thread(render, frame, True)
             stream.push_jpeg(jpeg)
-            boxes = [{**box, "label": "target"}] if self.boxes else []
-            self.publish("video/main/overlay", {"boxes": boxes})
+            self.publish("video/pattern/overlay", {"boxes": [{**box, "label": "target"}]})
             frame += 1
-            self.frames = frame
             await asyncio.sleep(max(0.0, 1 / self.fps - (time.monotonic() - started)))

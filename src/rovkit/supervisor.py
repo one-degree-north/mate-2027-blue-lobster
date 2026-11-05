@@ -12,6 +12,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from .client import HubClient
 from .protocol import MODULE_ID_PATTERN, status_topic
@@ -31,9 +32,10 @@ RELOAD_POLL = 1.0
 class ModuleSpec:
     id: str
     path: Path
+    kind: Literal["module", "source"] = "module"
 
 
-def discover(modules_dir: Path) -> list[ModuleSpec]:
+def discover(modules_dir: Path, kind: Literal["module", "source"] = "module") -> list[ModuleSpec]:
     """Each ``*.py`` file or package directory is one module; ``_``/``.`` prefixes are skipped."""
     specs: list[ModuleSpec] = []
     for entry in sorted(modules_dir.iterdir()):
@@ -48,7 +50,7 @@ def discover(modules_dir: Path) -> list[ModuleSpec]:
         if not re.match(MODULE_ID_PATTERN, module_id):
             log.warning("skipping %s: module names must match %s", entry, MODULE_ID_PATTERN)
             continue
-        specs.append(ModuleSpec(module_id, entry))
+        specs.append(ModuleSpec(module_id, entry, kind))
     return specs
 
 
@@ -84,7 +86,7 @@ class Supervisor:
                 group.create_task(self._watch_sources())
 
     async def _watch_sources(self) -> None:
-        seen = {s.spec.id: _source_mtime(s.spec.path) for s in self._states}
+        seen = {s.spec.path: _source_mtime(s.spec.path) for s in self._states}
         while not self._stopping.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stopping.wait(), RELOAD_POLL)
@@ -93,8 +95,8 @@ class Supervisor:
                     mtime = _source_mtime(state.spec.path)
                 except OSError:
                     continue
-                if mtime != seen[state.spec.id]:
-                    seen[state.spec.id] = mtime
+                if mtime != seen[state.spec.path]:
+                    seen[state.spec.path] = mtime
                     log.info("%s changed; restarting", state.spec.id)
                     state.restart_requested.set()
 
@@ -103,7 +105,7 @@ class Supervisor:
 
         async def report(name: str, **extra: object) -> None:
             await hub.publish(
-                status_topic(spec.id),
+                status_topic(spec.id, spec.kind),
                 {"state": name, "restarts": state.restarts, "tail": list(state.tail), **extra},
                 retain=True,
             )

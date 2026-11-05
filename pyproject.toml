@@ -6,6 +6,8 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
     "mcap>=1.6.0",
+    "numpy>=2.4.1",
+    "opencv-python>=4.13.0.90,<5",
     "pillow>=13.0.0",
     "pydantic>=2.8",
 ]
@@ -33,9 +35,12 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Copied unchanged from mate-26; not reformatted so they stay easy to diff against it.
+extend-exclude = ["modules/crab_counter/monkeyseecrab.py", "modules/photogrammetry/pgm.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
 
 [tool.ty.src]
-include = ["src", "tests", "modules"]
+include = ["src", "tests", "modules", "sources"]
+exclude = ["modules/crab_counter/monkeyseecrab.py", "modules/photogrammetry/pgm.py"]

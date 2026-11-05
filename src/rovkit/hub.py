@@ -185,8 +185,13 @@ def create_app(
         _require_origin(request)
         return await video.ingest(request)
 
+    async def frames(request: web.Request) -> web.StreamResponse:
+        _require_origin(request)
+        return await video.frames(request)
+
     app.router.add_get(WS_PATH, _ws_handler)
     app.router.add_get("/video/{name}/ingest", ingest)
+    app.router.add_get("/video/{name}/frames", frames)
     app.router.add_get("/video/{name}/stream.mjpg", video.view)
     if ui_dir is not None:
         index = ui_dir / "index.html"

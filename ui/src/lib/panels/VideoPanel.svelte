@@ -18,8 +18,8 @@
   const current = $derived(
     chosen && streams.includes(chosen)
       ? chosen
-      : streams.includes('main')
-        ? 'main'
+      : streams.includes('camera')
+        ? 'camera'
         : (streams[0] ?? null),
   )
   // A new epoch (hub reconnected) or retry restarts the HTTP stream, which doesn't resume itself.

@@ -68,6 +68,8 @@ client_frame_adapter: TypeAdapter[Publish | Subscribe | Unsubscribe] = TypeAdapt
 #   modules/<id>/state/<w>     retained  current widget value, published by the module
 #   modules/<id>/cmd/<w>       one-shot  UI input (click or new value), consumed by the module
 #   modules/<id>/status        retained  process state, published by the loader
+#   sources/<id>/status        retained  process state of a video source, published by the loader
+#   sources/<id>/info          retained  what the source reports about itself (live, fps, ...)
 #   video/<stream>/meta        retained  announces a stream; frames travel over HTTP/WS, not here
 #   video/<stream>/overlay     one-shot  detections to draw over the stream
 
@@ -86,5 +88,10 @@ def cmd_topic(module_id: str, widget: str) -> str:
     return f"modules/{module_id}/cmd/{widget}"
 
 
-def status_topic(module_id: str) -> str:
-    return f"modules/{module_id}/status"
+def status_topic(module_id: str, kind: str = "module") -> str:
+    """Where the loader reports a process: ``modules/<id>/status`` or ``sources/<id>/status``."""
+    return f"{'sources' if kind == 'source' else 'modules'}/{module_id}/status"
+
+
+def source_info_topic(source_id: str) -> str:
+    return f"sources/{source_id}/info"

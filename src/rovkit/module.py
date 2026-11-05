@@ -19,7 +19,7 @@ import contextlib
 import inspect
 import logging
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, ClassVar
 
 from .client import Handler, HubClient
@@ -29,7 +29,14 @@ from .protocol import (
     schema_topic,
     state_topic,
 )
-from .video import STREAM_NAME_PATTERN, VideoStream, ingest_url
+from .video import (
+    DEFAULT_SOURCE,
+    STREAM_NAME_PATTERN,
+    FrameSubscription,
+    VideoStream,
+    frames_url,
+    ingest_url,
+)
 from .widgets import Button, Widget
 
 _LIFECYCLE = frozenset({"on_start", "on_stop"})
@@ -85,7 +92,7 @@ class Module:
         self._thread_id = threading.get_ident()
         self._outbox: asyncio.Queue[tuple[str, Any, bool]] = asyncio.Queue()
         self._commands: asyncio.Queue[Callable[[], Awaitable[None] | None]] = asyncio.Queue()
-        self._video: list[asyncio.Task[None]] = []
+        self._streams: dict[str, VideoStream] = {}
 
     # -- override these --------------------------------------------------------------
 
@@ -112,17 +119,59 @@ class Module:
         await self._client.subscribe(pattern, handler)
 
     def video(self, name: str = "main") -> VideoStream:
-        """Open an outgoing video stream; push JPEG frames with ``stream.push_jpeg``."""
+        """Open an outgoing video stream; push JPEG frames with ``stream.push_jpeg``.
+
+        The stream is listed in the UI until you ``await stream.close()`` or the module stops.
+        """
         if not STREAM_NAME_PATTERN.match(name):
             raise ValueError(f"video name {name!r} must match {STREAM_NAME_PATTERN.pattern}")
+        if name in self._streams:
+            raise ValueError(f"video stream {name!r} is already open")
         stream = VideoStream(
-            name, ingest_url(self._client.url, name), self._client.session, self._loop
+            name,
+            ingest_url(self._client.url, name),
+            self._client.session,
+            self._loop,
+            on_close=lambda: self._stream_closed(name),
         )
-        self._video.append(stream.start())
+        self._streams[name] = stream
+        stream.start()
         self.publish(f"video/{name}/meta", {"module": self.id}, retain=True)
         return stream
 
+    def frames(self, name: str | None = None) -> FrameSubscription:
+        """Receive the newest frames of a video stream (default: ``ROVKIT_SOURCE``, "camera").
+
+        Use it as ``async with self.frames() as frames:`` and leave the block to close the link.
+        """
+        name = name or DEFAULT_SOURCE
+        if not STREAM_NAME_PATTERN.match(name):
+            raise ValueError(f"video name {name!r} must match {STREAM_NAME_PATTERN.pattern}")
+        return FrameSubscription(name, frames_url(self._client.url, name), self._client.session)
+
+    def spawn(self, work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
+        """Start background work from a handler. If it fails, the error is logged, not lost."""
+        task = asyncio.create_task(work, name=name)
+        task.add_done_callback(self._task_finished)
+        return task
+
     # -- internals ---------------------------------------------------------------------
+
+    def _task_finished(self, task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self.log.error("task %r failed", task.get_name(), exc_info=error)
+
+    def _stream_closed(self, name: str) -> None:
+        self._streams.pop(name, None)
+        self.publish(f"video/{name}/meta", None, retain=True)  # retained null clears the entry
+
+    async def _announce(self) -> None:
+        """Make the module visible: widget layout and state, and listen for UI commands."""
+        self.publish(schema_topic(self.id), self._schema(), retain=True)
+        for name, value in self._widget_values.items():
+            if self._widgets[name].kind != "button":
+                self.publish(state_topic(self.id, name), value, retain=True)
+        await self._client.subscribe(cmd_topic(self.id, "*"), self._on_command)
 
     def _set_widget(self, widget: Widget[Any], value: Any) -> None:
         self._widget_values[widget.name] = value
@@ -182,11 +231,7 @@ class Module:
         worker = asyncio.create_task(self._command_worker(), name="commands")
         main: asyncio.Task[None] | None = None
         try:
-            self.publish(schema_topic(self.id), self._schema(), retain=True)
-            for name, value in self._widget_values.items():
-                if self._widgets[name].kind != "button":
-                    self.publish(state_topic(self.id, name), value, retain=True)
-            await self._client.subscribe(cmd_topic(self.id, "*"), self._on_command)
+            await self._announce()
             await self.on_start()
             main = asyncio.create_task(self.run(), name="run")
             stopper = asyncio.create_task(stop.wait())
@@ -204,9 +249,11 @@ class Module:
                 await self.on_stop()
             except Exception:
                 self.log.exception("on_stop failed")
+            for stream in list(self._streams.values()):
+                await stream.close()  # also clears the stream from the UI
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._outbox.join(), _DRAIN_TIMEOUT)
-            for task in (worker, pump, *self._video):
+            for task in (worker, pump):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task

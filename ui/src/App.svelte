@@ -2,8 +2,9 @@
   import { onDestroy, onMount } from 'svelte'
   import { Dock } from './lib/dock'
   import { HubConnection } from './lib/hub.svelte'
+  import SourceChip from './lib/SourceChip.svelte'
 
-  const hub = new HubConnection(['modules/*', 'video/*'])
+  const hub = new HubConnection(['modules/*', 'sources/*', 'video/*'])
 
   let host: HTMLDivElement
   let dock = $state<Dock>()
@@ -27,6 +28,9 @@
   <header>
     <strong>MATE ROV</strong>
     <span class="status" data-status={hub.status}>hub: {hub.status}</span>
+    {#each hub.sourceIds as id (id)}
+      <SourceChip {hub} {id} />
+    {/each}
     <span class="spacer"></span>
     {#each hub.moduleIds as id (id)}
       <button type="button" onclick={() => dock?.open(id)} title="Show the {id} panel">

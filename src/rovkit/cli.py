@@ -14,7 +14,7 @@ from aiohttp import web
 
 from . import hub, recorder
 from .protocol import DEFAULT_HOST, DEFAULT_PORT, WS_PATH
-from .supervisor import Supervisor, discover
+from .supervisor import ModuleSpec, Supervisor, discover
 
 DEFAULT_UI_DIR = Path("ui/dist")
 
@@ -43,6 +43,14 @@ def _build_parser() -> argparse.ArgumentParser:
     run_cmd = sub.add_parser("run", help="run the hub and every module in modules/")
     _add_hub_args(run_cmd)
     run_cmd.add_argument("--modules-dir", type=Path, default=Path("modules"))
+    run_cmd.add_argument("--sources-dir", type=Path, default=Path("sources"))
+    run_cmd.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="run only this video source from the sources dir (repeatable; default: all)",
+    )
     run_cmd.add_argument("--reload", action="store_true", help="restart modules when files change")
     run_cmd.add_argument(
         "--record",
@@ -80,18 +88,31 @@ def _install_stop_handler(stop: asyncio.Event) -> None:
             signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
 
 
+def _select_sources(sources_dir: Path, names: list[str]) -> list[ModuleSpec]:
+    """Every source in ``sources_dir``, or only the named ones (an unknown name is an error)."""
+    found = discover(sources_dir, "source") if sources_dir.is_dir() else []
+    if not names:
+        return found
+    unknown = sorted(set(names) - {s.id for s in found})
+    if unknown:
+        available = ", ".join(s.id for s in found) or "none"
+        raise SystemExit(f"rovkit: unknown source {', '.join(unknown)} (available: {available})")
+    return [s for s in found if s.id in names]
+
+
 async def _run_all(args: argparse.Namespace) -> None:
     log = logging.getLogger("rovkit")
     specs = discover(args.modules_dir) if args.modules_dir.is_dir() else []
     if not specs:
         log.warning("no modules found in %s/", args.modules_dir)
+    specs += _select_sources(args.sources_dir, args.source)
     ui_dir = args.ui_dir if (args.ui_dir / "index.html").exists() else None
     origins = [*hub.DEV_UI_ORIGINS, *args.allow_origin]
 
     runner = web.AppRunner(hub.create_app(origins, ui_dir), shutdown_timeout=2, access_log=None)
     await runner.setup()
     await web.TCPSite(runner, args.host, args.port).start()
-    log.info("hub on ws://%s:%d%s (%d modules)", args.host, args.port, WS_PATH, len(specs))
+    log.info("hub on ws://%s:%d%s (%d processes)", args.host, args.port, WS_PATH, len(specs))
     if ui_dir is not None:
         log.info("UI at http://%s:%d/", args.host, args.port)
 
