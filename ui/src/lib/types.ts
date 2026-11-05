@@ -34,6 +34,23 @@ export interface PlotSchema extends WidgetBase {
   yMax: number | null
 }
 
+export interface NumberSchema extends WidgetBase {
+  kind: 'number'
+  min: number | null
+  max: number | null
+  step: number | null
+  unit: string | null
+}
+
+export interface SelectSchema extends WidgetBase {
+  kind: 'select'
+  options: { value: string; label: string }[]
+}
+
+export interface StatusSchema extends WidgetBase {
+  kind: 'status'
+}
+
 export interface ProgressSchema extends WidgetBase {
   kind: 'progress'
 }
@@ -41,8 +58,11 @@ export interface ProgressSchema extends WidgetBase {
 export type WidgetSchema =
   | ButtonSchema
   | SliderSchema
+  | NumberSchema
+  | SelectSchema
   | ToggleSchema
   | ReadoutSchema
+  | StatusSchema
   | ProgressSchema
   | PlotSchema
 

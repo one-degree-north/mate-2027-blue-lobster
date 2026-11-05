@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rovkit import Button, Module, Plot, Progress, Readout, Slider, Toggle
+from rovkit import Button, Module, Number, Plot, Progress, Readout, Select, Slider, Status, Toggle
 
 
 def test_slider_clamps_and_snaps_to_step() -> None:
@@ -114,3 +114,77 @@ def test_progress_is_output_only() -> None:
             done = Progress()
 
             async def on_done(self, value: float) -> None: ...
+
+
+def test_number_clamps_to_its_bounds_but_does_not_snap() -> None:
+    number = Number(0, 10, step=0.5)
+    assert number.coerce(3.14159) == 3.14159
+    assert number.coerce(99) == 10
+    assert number.coerce(-1) == 0
+    assert Number().coerce(-1e9) == -1e9  # no bounds, no clamping
+
+
+@pytest.mark.parametrize("bad", ["5", None, True, float("nan"), float("inf")])
+def test_number_rejects_non_numbers(bad: object) -> None:
+    with pytest.raises(ValueError):
+        Number().coerce(bad)
+
+
+def test_number_validates_its_definition_and_schema() -> None:
+    with pytest.raises(ValueError):
+        Number(5, 5)
+    with pytest.raises(ValueError):
+        Number(step=0)
+    schema = Number(0, 1, unit="m", default=2).schema()
+    assert schema["kind"] == "number" and schema["unit"] == "m"
+    assert Number(0, 1, default=2).initial() == 1.0  # the default is clamped too
+
+
+def test_select_takes_ids_or_an_id_to_label_mapping() -> None:
+    plain = Select(["a", "b"])
+    assert plain.initial() == "a"
+    assert plain.schema()["options"] == [
+        {"value": "a", "label": "a"},
+        {"value": "b", "label": "b"},
+    ]
+    labelled = Select({"lo": "Low", "hi": "High"}, default="hi")
+    assert labelled.initial() == "hi"
+    assert labelled.schema()["options"][0] == {"value": "lo", "label": "Low"}
+
+
+def test_select_only_accepts_its_options() -> None:
+    select = Select(["a", "b"])
+    assert select.coerce("b") == "b"
+    for bad in ("c", 1, None, ["a"]):
+        with pytest.raises(ValueError):
+            select.coerce(bad)
+    with pytest.raises(ValueError):
+        Select([])
+    with pytest.raises(ValueError):
+        Select(["a"], default="z")
+
+
+def test_status_accepts_text_or_text_and_tone() -> None:
+    status = Status(default="Idle")
+    assert status.initial() == {"text": "Idle", "tone": "info"}
+    assert status.coerce(("Failed", "error")) == {"text": "Failed", "tone": "error"}
+    assert status.coerce({"text": "Done", "tone": "ok"}) == {"text": "Done", "tone": "ok"}
+    for bad in (("x", "loud"), ("x",), 5, None, {"text": "x"}, (1, "ok")):
+        with pytest.raises(ValueError):
+            status.coerce(bad)
+
+
+def test_new_input_widgets_get_handlers_checked_like_the_others() -> None:
+    with pytest.raises(TypeError, match=r"\(self, value\)"):
+
+        class A(Module):
+            gain = Number()
+
+            async def on_gain(self) -> None: ...
+
+    with pytest.raises(TypeError, match="output-only"):
+
+        class B(Module):
+            note = Status()
+
+            async def on_note(self, value: str) -> None: ...

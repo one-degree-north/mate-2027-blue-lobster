@@ -67,13 +67,17 @@ client_frame_adapter: TypeAdapter[Publish | Subscribe | Unsubscribe] = TypeAdapt
 #   modules/<id>/schema        retained  widget layout, published by the module
 #   modules/<id>/state/<w>     retained  current widget value, published by the module
 #   modules/<id>/cmd/<w>       one-shot  UI input (click or new value), consumed by the module
+#   modules/<id>/disabled      retained  ids of the widgets the module currently refuses input for
 #   modules/<id>/status        retained  process state, published by the loader
+#   modules/_index             retained  ids of every module the loader started (the UI drops
+#                                        saved panels for modules that are not listed)
 #   sources/<id>/status        retained  process state of a video source, published by the loader
 #   sources/<id>/info          retained  what the source reports about itself (live, fps, ...)
 #   video/<stream>/meta        retained  announces a stream; frames travel over HTTP/WS, not here
 #   video/<stream>/overlay     one-shot  detections to draw over the stream
 
 MODULE_ID_PATTERN = r"^[a-z][a-z0-9_]*$"
+MODULE_INDEX_TOPIC = "modules/_index"  # "_" cannot start a module id, so this never clashes
 
 
 def schema_topic(module_id: str) -> str:
@@ -86,6 +90,10 @@ def state_topic(module_id: str, widget: str) -> str:
 
 def cmd_topic(module_id: str, widget: str) -> str:
     return f"modules/{module_id}/cmd/{widget}"
+
+
+def disabled_topic(module_id: str) -> str:
+    return f"modules/{module_id}/disabled"
 
 
 def status_topic(module_id: str, kind: str = "module") -> str:

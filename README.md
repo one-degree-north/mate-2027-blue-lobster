@@ -37,6 +37,11 @@ it without the bot, run `just camera-sim` in another terminal (color bars; `just
 
 The photogrammetry module needs its Swift library once: `just build-pgm` (macOS only).
 
+Photogrammetry takes one photo per `1 / rate` seconds (the sharpest frame of each interval),
+so the rate does not depend on the camera's fps. To get real sizes, scan an object of known
+length, type that length into *Reference length*, and press *Use Model as Reference*; the
+scale factor is then set for every later scan.
+
 ## Setup
 
 ```sh

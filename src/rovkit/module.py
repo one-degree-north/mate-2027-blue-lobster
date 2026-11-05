@@ -26,6 +26,7 @@ from .client import Handler, HubClient
 from .protocol import (
     Message,
     cmd_topic,
+    disabled_topic,
     schema_topic,
     state_topic,
 )
@@ -93,6 +94,7 @@ class Module:
         self._outbox: asyncio.Queue[tuple[str, Any, bool]] = asyncio.Queue()
         self._commands: asyncio.Queue[Callable[[], Awaitable[None] | None]] = asyncio.Queue()
         self._streams: dict[str, VideoStream] = {}
+        self._disabled: set[str] = set()
 
     # -- override these --------------------------------------------------------------
 
@@ -149,6 +151,22 @@ class Module:
             raise ValueError(f"video name {name!r} must match {STREAM_NAME_PATTERN.pattern}")
         return FrameSubscription(name, frames_url(self._client.url, name), self._client.session)
 
+    def update(self, widget: str, value: Any) -> None:
+        """Assign a widget only if the value changed, so a loop can call it every frame."""
+        target = self._widgets.get(widget)
+        if target is None:
+            raise ValueError(f"no widget {widget!r} (widgets: {list(self._widgets)})")
+        coerced = target.coerce(value)
+        if self._widget_values[widget] != coerced:
+            self._set_widget(target, coerced)
+
+    def disable(self, *widgets: str) -> None:
+        """Grey out input widgets and refuse their commands, e.g. settings while capturing."""
+        self._set_disabled(widgets, True)
+
+    def enable(self, *widgets: str) -> None:
+        self._set_disabled(widgets, False)
+
     def spawn(self, work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
         """Start background work from a handler. If it fails, the error is logged, not lost."""
         task = asyncio.create_task(work, name=name)
@@ -161,6 +179,20 @@ class Module:
         if not task.cancelled() and (error := task.exception()) is not None:
             self.log.error("task %r failed", task.get_name(), exc_info=error)
 
+    def _set_disabled(self, names: tuple[str, ...], disabled: bool) -> None:
+        for name in names:
+            widget = self._widgets.get(name)
+            if widget is None or not widget.accepts_input:
+                raise ValueError(f"{name!r} is not an input widget of this module")
+        before = set(self._disabled)
+        self._disabled = self._disabled | set(names) if disabled else self._disabled - set(names)
+        if self._disabled != before:
+            self._publish_disabled()
+
+    def _publish_disabled(self) -> None:
+        ordered = [name for name in self._widgets if name in self._disabled]
+        self.publish(disabled_topic(self.id), ordered, retain=True)
+
     def _stream_closed(self, name: str) -> None:
         self._streams.pop(name, None)
         self.publish(f"video/{name}/meta", None, retain=True)  # retained null clears the entry
@@ -168,6 +200,7 @@ class Module:
     async def _announce(self) -> None:
         """Make the module visible: widget layout and state, and listen for UI commands."""
         self.publish(schema_topic(self.id), self._schema(), retain=True)
+        self._publish_disabled()  # replaces whatever a previous run of this module left retained
         for name, value in self._widget_values.items():
             if self._widgets[name].kind != "button":
                 self.publish(state_topic(self.id, name), value, retain=True)
@@ -211,6 +244,9 @@ class Module:
         widget = self._widgets.get(name)
         if widget is None or not widget.accepts_input:
             self.log.warning("ignoring command for unknown or output-only widget %r", name)
+            return
+        if name in self._disabled:
+            self.log.debug("ignoring command for disabled widget %r", name)
             return
         handler = getattr(self, f"on_{name}", None)
         if isinstance(widget, Button):

@@ -15,6 +15,7 @@ Readout or Plot publishes the new value to the UI.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
 if TYPE_CHECKING:
@@ -117,6 +118,95 @@ class Slider(Widget[float]):
         }
 
 
+class Number(Widget[float]):
+    """A number the user types in. Out-of-range values are clamped; nothing snaps to ``step``."""
+
+    kind = "number"
+    accepts_input = True
+
+    def __init__(
+        self,
+        min: float | None = None,
+        max: float | None = None,
+        *,
+        step: float | None = None,
+        default: float = 0.0,
+        label: str | None = None,
+        unit: str | None = None,
+    ) -> None:
+        super().__init__(label)
+        if min is not None and max is not None and not min < max:
+            raise ValueError(f"Number needs min < max, got {min} and {max}")
+        if step is not None and step <= 0:
+            raise ValueError(f"Number step must be positive, got {step}")
+        self.min, self.max, self.step, self.unit = min, max, step, unit
+        self._default = default
+
+    def initial(self) -> float:
+        return self.coerce(self._default)
+
+    def coerce(self, value: Any) -> float:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"number {self.name!r} needs a finite number, got {value!r}")
+        number = float(value)
+        if self.min is not None:
+            number = max(number, self.min)
+        if self.max is not None:
+            number = min(number, self.max)
+        return number
+
+    def schema(self) -> dict[str, Any]:
+        return super().schema() | {
+            "min": self.min,
+            "max": self.max,
+            "step": self.step,
+            "unit": self.unit,
+        }
+
+
+class Select(Widget[str]):
+    """Pick one of several options. Options are ids, or a mapping of id to the label shown."""
+
+    kind = "select"
+    accepts_input = True
+
+    def __init__(
+        self,
+        options: Sequence[str] | Mapping[str, str],
+        *,
+        default: str | None = None,
+        label: str | None = None,
+    ) -> None:
+        super().__init__(label)
+        self.options: dict[str, str] = (
+            dict(options) if isinstance(options, Mapping) else {o: o for o in options}
+        )
+        if not self.options:
+            raise ValueError("Select needs at least one option")
+        if default is not None and default not in self.options:
+            raise ValueError(f"Select default {default!r} is not one of {list(self.options)}")
+        self._default = default if default is not None else next(iter(self.options))
+
+    def initial(self) -> str:
+        return self._default
+
+    def coerce(self, value: Any) -> str:
+        if not isinstance(value, str) or value not in self.options:
+            raise ValueError(
+                f"select {self.name!r} needs one of {list(self.options)}, got {value!r}"
+            )
+        return value
+
+    def schema(self) -> dict[str, Any]:
+        return super().schema() | {
+            "options": [{"value": v, "label": text} for v, text in self.options.items()]
+        }
+
+
 class Toggle(Widget[bool]):
     kind = "toggle"
     accepts_input = True
@@ -151,6 +241,42 @@ class Readout(Widget[Any]):
 
     def schema(self) -> dict[str, Any]:
         return super().schema() | {"unit": self.unit}
+
+
+TONES = ("info", "ok", "warn", "error")
+
+
+class Status(Widget[dict[str, str]]):
+    """A line of text whose colour shows how things are going. Output only.
+
+    self.status = "Idle"                          # tone "info"
+    self.status = ("Reconstruction failed", "error")   # tone is info, ok, warn or error
+    """
+
+    kind = "status"
+
+    def __init__(self, label: str | None = None, *, default: str = "") -> None:
+        super().__init__(label)
+        self._default = default
+
+    def initial(self) -> dict[str, str]:
+        return self.coerce(self._default)
+
+    def __set__(self, obj: Module, value: str | tuple[str, str] | dict[str, str]) -> None:
+        obj._set_widget(self, self.coerce(value))
+
+    def coerce(self, value: Any) -> dict[str, str]:
+        if isinstance(value, str):
+            text, tone = value, "info"
+        elif isinstance(value, tuple) and len(value) == 2:
+            text, tone = value
+        elif isinstance(value, dict) and set(value) == {"text", "tone"}:
+            text, tone = value["text"], value["tone"]
+        else:
+            raise ValueError(f"status {self.name!r} needs text or (text, tone), got {value!r}")
+        if not isinstance(text, str) or tone not in TONES:
+            raise ValueError(f"status {self.name!r} needs a text and a tone from {TONES}")
+        return {"text": text, "tone": tone}
 
 
 class Progress(Widget[float | None]):

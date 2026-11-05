@@ -65,12 +65,24 @@ export class HubConnection {
     return this.topics[`modules/${moduleId}/status`] as ModuleStatus | undefined
   }
 
+  /** Ids of every module the loader started, or undefined when no loader is running. */
+  knownModules(): string[] | undefined {
+    const ids = this.topics['modules/_index']
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : undefined
+  }
+
   sourceStatus(sourceId: string): ModuleStatus | undefined {
     return this.topics[`sources/${sourceId}/status`] as ModuleStatus | undefined
   }
 
   sourceInfo(sourceId: string): SourceInfo | undefined {
     return this.topics[`sources/${sourceId}/info`] as SourceInfo | undefined
+  }
+
+  /** Ids of the widgets the module currently refuses input for. */
+  disabledWidgets(moduleId: string): string[] {
+    const ids = this.topics[`modules/${moduleId}/disabled`]
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []
   }
 
   widgetValue(moduleId: string, widgetId: string): unknown {

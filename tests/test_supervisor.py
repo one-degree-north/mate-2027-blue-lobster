@@ -93,6 +93,7 @@ async def test_supervisor_runs_restarts_and_stops_modules(
     try:
         await eventually(lambda: schema_topic("ok") in statuses)
         assert state_of(statuses, "ok") == "running"
+        assert statuses["modules/_index"].data == ["crash", "ok"]  # what the UI keeps panels for
         assert statuses[schema_topic("ok")].data["widgets"][0]["id"] == "value"
 
         # The crashed report carries the module's last output so the UI can show why.

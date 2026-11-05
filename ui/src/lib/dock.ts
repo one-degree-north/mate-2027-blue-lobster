@@ -74,6 +74,22 @@ export class Dock {
     }
   }
 
+  /**
+   * Close saved panels for modules that no longer exist, e.g. one that was renamed or moved.
+   * `known` is the loader's list of modules; a module that is merely not running yet is on it.
+   */
+  prune(known: string[]): void {
+    for (const panel of [...this.api.panels]) {
+      if (!panel.id.startsWith('module:')) continue
+      const id = panel.id.slice('module:'.length)
+      if (known.includes(id)) continue
+      panel.api.close()
+      // Forget it, so that a module of that name added later gets its panel again.
+      this.#seen.delete(id)
+    }
+    writeStorage(SEEN_KEY, JSON.stringify([...this.#seen]))
+  }
+
   isOpen(moduleId: string): boolean {
     return this.api.getPanel(panelId(moduleId)) !== undefined
   }

@@ -1,10 +1,13 @@
 <script lang="ts">
   import type { HubConnection } from '../hub.svelte'
   import ButtonWidget from '../widgets/ButtonWidget.svelte'
+  import NumberWidget from '../widgets/NumberWidget.svelte'
   import PlotWidget from '../widgets/PlotWidget.svelte'
   import ProgressWidget from '../widgets/ProgressWidget.svelte'
   import ReadoutWidget from '../widgets/ReadoutWidget.svelte'
+  import SelectWidget from '../widgets/SelectWidget.svelte'
   import SliderWidget from '../widgets/SliderWidget.svelte'
+  import StatusWidget from '../widgets/StatusWidget.svelte'
   import ToggleWidget from '../widgets/ToggleWidget.svelte'
 
   let { hub, moduleId }: { hub: HubConnection; moduleId: string } = $props()
@@ -13,6 +16,8 @@
   const status = $derived(hub.moduleStatus(moduleId))
   // Commands only make sense while the module's process is up and the hub is reachable.
   const live = $derived(hub.status === 'open' && status?.state === 'running')
+  // Widgets the module has switched off for now (e.g. settings while it is capturing).
+  const locked = $derived(new Set(hub.disabledWidgets(moduleId)))
 </script>
 
 <div class="module">
@@ -35,23 +40,39 @@
             schema={widget}
             value={hub.widgetValue(moduleId, widget.id)}
             send={(v) => hub.command(moduleId, widget.id, v)}
-            disabled={!live}
+            disabled={!live || locked.has(widget.id)}
+          />
+        {:else if widget.kind === 'number'}
+          <NumberWidget
+            schema={widget}
+            value={hub.widgetValue(moduleId, widget.id)}
+            send={(v) => hub.command(moduleId, widget.id, v)}
+            disabled={!live || locked.has(widget.id)}
+          />
+        {:else if widget.kind === 'select'}
+          <SelectWidget
+            schema={widget}
+            value={hub.widgetValue(moduleId, widget.id)}
+            send={(v) => hub.command(moduleId, widget.id, v)}
+            disabled={!live || locked.has(widget.id)}
           />
         {:else if widget.kind === 'toggle'}
           <ToggleWidget
             schema={widget}
             value={hub.widgetValue(moduleId, widget.id)}
             send={(v) => hub.command(moduleId, widget.id, v)}
-            disabled={!live}
+            disabled={!live || locked.has(widget.id)}
           />
         {:else if widget.kind === 'button'}
           <ButtonWidget
             schema={widget}
             send={() => hub.command(moduleId, widget.id)}
-            disabled={!live}
+            disabled={!live || locked.has(widget.id)}
           />
         {:else if widget.kind === 'readout'}
           <ReadoutWidget schema={widget} value={hub.widgetValue(moduleId, widget.id)} />
+        {:else if widget.kind === 'status'}
+          <StatusWidget schema={widget} value={hub.widgetValue(moduleId, widget.id)} />
         {:else if widget.kind === 'progress'}
           <ProgressWidget schema={widget} value={hub.widgetValue(moduleId, widget.id)} />
         {:else if widget.kind === 'plot'}

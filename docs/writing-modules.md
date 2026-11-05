@@ -52,13 +52,34 @@ class Depth(Module):
 |---|---|---|---|---|
 | `Button("label")` | button | – | – | `async def on_x(self)` |
 | `Slider(min, max, step=, default=, unit=)` | slider | float | moves the slider | `async def on_x(self, value)` |
+| `Number(min, max, step=, default=, unit=)` | number field | float | sets it | `async def on_x(self, value)` |
+| `Select(options, default=)` | dropdown | the chosen id | picks one | `async def on_x(self, value)` |
 | `Toggle(default=)` | switch | bool | flips it | `async def on_x(self, value)` |
 | `Readout("label", unit=, default=)` | text | last value | updates it | – |
+| `Status("label")` | coloured text | `{"text", "tone"}` | text, or `(text, tone)` | – |
 | `Progress("label")` | progress bar | last fraction | sets 0–1 (`None` = unknown) | – |
 | `Plot("label", unit=, window=, y_min=, y_max=)` | scrolling chart | last point | adds a point | – |
 
+`Select` takes ids (`Select(["a", "b"])`) or a mapping of id to the label shown
+(`Select({"lo": "Low", "hi": "High"})`). `Number` clamps to its bounds but does not snap to
+`step`. `Status` tones are `info`, `ok`, `warn` and `error`:
+`self.status = ("Reconstruction failed", "error")`.
+
 Handlers are found by name: `on_<widget>`. A typo (`on_gian`) is an error when the file loads,
 not a silent no-op. Values from the UI are validated and clamped before your code sees them.
+
+### Switching widgets off
+
+While a module is busy, grey out controls that must not be touched:
+
+```python
+self.disable("gain", "start")  # greyed in the UI, and their commands are ignored
+self.enable("gain")
+```
+
+Only input widgets can be disabled. The module refuses the commands itself, so a stale or
+hand-made UI message cannot get through. `self.update("x", value)` assigns a widget only
+when the value changed, which suits a loop that runs every frame.
 
 Widgets appear in the order you declare them. Widget state is remembered by the hub, so
 refreshing the page never loses it.
@@ -152,6 +173,8 @@ class Webcam(Source):
 For GStreamer, subclass `rovkit.gstreamer.GstSource` and return a `gst-launch-1.0` pipeline
 ending in `jpegenc ! fdsink fd=1` from `pipeline()`; see `sources/gst_camera.py`. It shows a
 "NO SIGNAL" picture when frames stop and restarts the pipeline if it exits.
+If the source cannot start, override `idle_reason()` (nothing to do yet, shown as "idle") or
+`problem()` (something is wrong, shown as an error); each is logged once, not on every check.
 
 ## Talking to other modules
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import logging
 import re
 import shlex
 from typing import ClassVar
@@ -123,10 +124,23 @@ class GstSource(Source):
     no_signal_after: ClassVar[float] = 1.0
     """Seconds without a frame before the UI is shown "NO SIGNAL"."""
     restart_delay: ClassVar[float] = 1.0
+    """Seconds before restarting a pipeline that exited; doubles while it keeps failing quickly."""
+    max_restart_delay: ClassVar[float] = 10.0
+    stable_after: ClassVar[float] = 5.0
+    """A pipeline that ran this long counts as healthy, and the restart delay starts over."""
+    retry_wait: ClassVar[float] = 5.0
+    """Seconds between checks while the source cannot start (nothing chosen, file missing...)."""
 
     def pipeline(self) -> str:
         """The pipeline description; it must end with ``... ! jpegenc ! fdsink fd=1``."""
         raise NotImplementedError
+
+    def idle_reason(self) -> str | None:
+        """Return why the source has nothing to do (e.g. no clip chosen), else ``None``.
+
+        This is not an error: the UI shows the source as "idle", and nothing is logged as one.
+        """
+        return None
 
     def problem(self) -> str | None:
         """Return a message if the source cannot start (e.g. a missing file), else ``None``."""
@@ -135,26 +149,49 @@ class GstSource(Source):
     async def run(self) -> None:
         stream = self.video(self.stream)
         placeholder = no_signal_jpeg()
+        loop = asyncio.get_running_loop()
+        noted: tuple[str, str] | None = None  # what we last said while unable to start
+        delay = self.restart_delay
         while True:
-            if (message := self.problem()) is not None:
-                self.log.error("%s", message)
-                self.report("error", detail=message)
-                await asyncio.sleep(max(self.restart_delay, 5.0))
+            if (reason := self.idle_reason()) is not None:
+                noted = self._note(noted, "idle", reason, logging.INFO)
+                await asyncio.sleep(self.retry_wait)
                 continue
+            if (message := self.problem()) is not None:
+                noted = self._note(noted, "error", message, logging.ERROR)
+                await asyncio.sleep(self.retry_wait)
+                continue
+            noted = None
             self.report("starting")
+            started = loop.time()
             try:
                 code = await self._play(stream, placeholder)
             except FileNotFoundError:
                 message = (
                     f"{self.launcher[0]} not found: install GStreamer (brew install gstreamer)"
                 )
-                self.log.error("%s", message)
-                self.report("error", detail=message)
-                await asyncio.sleep(max(self.restart_delay, 5.0))
+                noted = self._note(noted, "error", message, logging.ERROR)
+                await asyncio.sleep(self.retry_wait)
                 continue
-            self.log.warning("pipeline exited with code %s; restarting", code)
+            # A pipeline that dies at once is probably misconfigured: slow down, don't spin.
+            ran = loop.time() - started
+            delay = (
+                self.restart_delay
+                if ran >= self.stable_after
+                else min(delay * 2, self.max_restart_delay)
+            )
+            self.log.warning("pipeline exited with code %s; restarting in %.1fs", code, delay)
             self.report("stopped", code=code)
-            await asyncio.sleep(self.restart_delay)
+            await asyncio.sleep(delay)
+
+    def _note(
+        self, noted: tuple[str, str] | None, state: str, message: str, level: int
+    ) -> tuple[str, str]:
+        """Log and report a waiting state once, not on every check."""
+        if noted != (state, message):
+            self.log.log(level, "%s", message)
+            self.report(state, detail=message)
+        return (state, message)
 
     async def _play(self, stream: VideoStream, placeholder: bytes) -> int | None:
         proc = await asyncio.create_subprocess_exec(

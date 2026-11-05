@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte'
   import { Dock } from './lib/dock'
   import { HubConnection } from './lib/hub.svelte'
+  import ModuleMenu from './lib/ModuleMenu.svelte'
   import SourceChip from './lib/SourceChip.svelte'
 
   const hub = new HubConnection(['modules/*', 'sources/*', 'video/*'])
@@ -18,6 +19,12 @@
     dock?.sync(hub.moduleIds)
   })
 
+  // Drop saved panels for modules that were renamed or removed since the layout was saved.
+  $effect(() => {
+    const known = hub.knownModules()
+    if (known) dock?.prune(known)
+  })
+
   onDestroy(() => {
     dock?.dispose()
     hub.close()
@@ -32,11 +39,7 @@
       <SourceChip {hub} {id} />
     {/each}
     <span class="spacer"></span>
-    {#each hub.moduleIds as id (id)}
-      <button type="button" onclick={() => dock?.open(id)} title="Show the {id} panel">
-        {hub.schema(id)?.title ?? id}
-      </button>
-    {/each}
+    <ModuleMenu {hub} {dock} />
     <button type="button" onclick={() => dock?.resetLayout()}>Reset layout</button>
   </header>
   <div class="dock" bind:this={host}></div>

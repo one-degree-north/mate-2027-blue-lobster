@@ -48,16 +48,39 @@ private func warn(_ message: String, terminator: String = "\n") {
     print("\u{001B}[0;33m[\(timeFormatter.string(from: Date()))] \(message)\u{001B}[0;0m", terminator: terminator)
 }
 
-private func err(_ message: String, terminator: String = "\n") {
-    print("\u{001B}[0;31m[\(timeFormatter.string(from: Date()))] \u{001B}[1;31m\(message)\u{001B}[0;0m", terminator: terminator)
-    exit(1)
+// The state of the current (or last) reconstruction. Python reads it with get_state().
+// 2, 3 and 4 mean "finished", which is what is_completed() reports.
+private enum RunState: Int32 {
+    case idle = 0
+    case running = 1
+    case done = 2
+    case failed = 3
+    case cancelled = 4
 }
 
-private let completed = OSAllocatedUnfairLock(initialState: false)
-private let progress = OSAllocatedUnfairLock(initialState: Double(0))
-private let eta = OSAllocatedUnfairLock(initialState: Double(0))
+private struct Status {
+    var state: RunState = .idle
+    var progress = 0.0
+    var eta = 0.0
+    var error: String?
+}
+
+private let status = OSAllocatedUnfairLock(initialState: Status())
 var start_time: Date = .init()
 private var activeSession: PhotogrammetrySession?
+
+/// Record a failure for Python to read with get_error(). This replaces the old err(), which
+/// printed the message and then exit(1)ed the whole host process. The first error is kept,
+/// because later ones are usually consequences of it.
+private func fail(_ message: String) {
+    print("\u{001B}[0;31m[\(timeFormatter.string(from: Date()))] \u{001B}[1;31m\(message)\u{001B}[0;0m")
+    status.withLock { status in
+        if status.error == nil {
+            status.error = message
+        }
+        status.state = .failed
+    }
+}
 
 @_cdecl("set_debug")
 public func SetDebug(enabled: Bool) {
@@ -66,22 +89,42 @@ public func SetDebug(enabled: Bool) {
 
 @_cdecl("is_completed")
 public func IsCompleted() -> Bool {
-    completed.withLock { completed in completed }
+    status.withLock { $0.state.rawValue >= RunState.done.rawValue }
+}
+
+@_cdecl("get_state")
+public func GetState() -> Int32 {
+    status.withLock { $0.state.rawValue }
 }
 
 @_cdecl("get_progress")
 public func GetProgress() -> Double {
-    progress.withLock { progress in progress }
+    status.withLock { $0.progress }
 }
 
 @_cdecl("get_eta")
 public func GetETA() -> Double {
-    eta.withLock { eta in eta }
+    status.withLock { $0.eta }
+}
+
+/// Copy the last error message (UTF-8, NUL-terminated, truncated to fit) into `buffer`.
+/// Returns its length in bytes, or 0 if there is no error.
+@_cdecl("get_error")
+public func GetError(buffer: UnsafeMutablePointer<CChar>, size: Int32) -> Int32 {
+    guard size > 0, let message = status.withLock({ $0.error }) else {
+        return 0
+    }
+    let bytes = Array(message.utf8.prefix(Int(size) - 1))
+    for (index, byte) in bytes.enumerated() {
+        buffer[index] = CChar(bitPattern: byte)
+    }
+    buffer[bytes.count] = 0
+    return Int32(bytes.count)
 }
 
 @_cdecl("stop_photogrammetry_session")
 public func StopPhotogrammetrySession() {
-    guard let session = activeSession else {
+    guard let session = activeSession, status.withLock({ $0.state == .running }) else {
         warn("No active session to stop.")
         return
     }
@@ -99,6 +142,12 @@ public func RunPhotogrammetrySession(
     tempDir: UnsafePointer<CChar>,
     detailLevel: Int32
 ) {
+    // A fresh run starts from a clean slate: nothing left over from the previous one.
+    status.withLock { status in
+        status = Status()
+        status.state = .running
+    }
+
     let imagesPath = String(cString: imagesPath)
     let outputPath = String(cString: outputPath)
     let tempDir = String(cString: tempDir)
@@ -116,13 +165,13 @@ public func RunPhotogrammetrySession(
     case 4:
         detail = .raw
     default:
-        err("Invalid detail level: \(detailLevel). Must be 0, 1, 2, 3, or 4")
+        fail("Invalid detail level: \(detailLevel). Must be 0, 1, 2, 3, or 4")
         return
     }
 
     guard PhotogrammetrySession.isSupported else {
-        err("Photogrammetry not supported on this device")
-        exit(1)
+        fail("Photogrammetry is not supported on this device")
+        return
     }
 
     let inputFolderUrl = URL(filePath: imagesPath, directoryHint: URL.DirectoryHint.isDirectory)
@@ -134,101 +183,118 @@ public func RunPhotogrammetrySession(
 
     info("Using configuration: \(String(describing: configuration))")
 
-    var possibleSession: PhotogrammetrySession? = nil
+    let session: PhotogrammetrySession
     do {
-        possibleSession = try PhotogrammetrySession(input: inputFolderUrl, configuration: configuration)
+        session = try PhotogrammetrySession(input: inputFolderUrl, configuration: configuration)
         info("Created Photogrammetry Session")
     } catch {
-        err("Error creating session: \(String(describing: error))")
-        exit(1)
-    }
-
-    guard let session = possibleSession else {
-        exit(1)
+        fail("Could not create the photogrammetry session: \(error.localizedDescription)")
+        return
     }
 
     activeSession = session
 
     let logger = Task {
-        for try await output in session.outputs {
-            switch output {
-            case .processingComplete:
-                info("Processing is complete!")
-                info("Time Taken: \(timeIntervalFormatter.string(from: start_time, to: Date()) ?? "")")
+        do {
+            for try await output in session.outputs {
+                switch output {
+                case .processingComplete:
+                    info("Processing is complete!")
+                    info("Time Taken: \(timeIntervalFormatter.string(from: start_time, to: Date()) ?? "")")
 
-                guard FileManager.default.fileExists(atPath: outputPath) else {
-                    warn("Output file was not created - processing may have failed")
-                    completed.withLock { completed in completed = true }
+                    // An error reported earlier (requestError) already made this run failed.
+                    if status.withLock({ $0.state == .failed }) {
+                        activeSession = nil
+                        return
+                    }
+
+                    guard FileManager.default.fileExists(atPath: outputPath) else {
+                        fail("Output file was not created - processing failed")
+                        activeSession = nil
+                        return
+                    }
+
+                    // The OBJ export is a side product; losing it must not fail the reconstruction.
+                    let modelAsset = MDLAsset(url: URL(filePath: outputPath))
+                    modelAsset.loadTextures()
+
+                    let objPath = URL(filePath: tempDir, directoryHint: .isDirectory).appending(component: "model").appending(component: "out.obj")
+                    try? FileManager.default.createDirectory(at: objPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+                    do {
+                        try modelAsset.export(to: objPath)
+                    } catch {
+                        warn("Could not export the OBJ copy of the model: \(error)")
+                    }
+
+                    status.withLock { status in
+                        status.progress = 1.0
+                        status.eta = 0.0
+                        status.state = .done
+                    }
+                    activeSession = nil
                     return
+                case .processingCancelled:
+                    warn("Processing was cancelled.")
+                    status.withLock { status in
+                        status.progress = 0.0
+                        status.eta = 0.0
+                        status.state = .cancelled
+                    }
+                    activeSession = nil
+                    return
+                case let .requestError(request, error):
+                    fail("Request \(String(describing: request)) failed: \(error.localizedDescription)")
+                case let .requestComplete(request, result):
+                    info("Request complete: \(String(describing: request)) with result...")
+                    switch result {
+                    case let .modelFile(url):
+                        info("\tmodelFile available at url=\(url)")
+                    default:
+                        warn("\tUnexpected result: \(String(describing: result))")
+                    }
+                case let .requestProgress(_, fractionComplete):
+                    status.withLock { $0.progress = fractionComplete }
+                    info("Progress = \(percentFormatter.string(from: NSNumber(value: fractionComplete)) ?? "")")
+                case .inputComplete:
+                    info("Data ingestion is complete.  Beginning processing...")
+                case let .invalidSample(id, reason):
+                    warn("Invalid Sample! id=\(id)  reason=\"\(reason)\"")
+                case let .skippedSample(id):
+                    warn("Sample id=\(id) was skipped by processing.")
+                case .automaticDownsampling:
+                    warn("Automatic downsampling was applied!")
+                case let .requestProgressInfo(_, requestInfo):
+                    // RealityKit has no estimate early on, so this can be nil.
+                    let remaining = requestInfo.estimatedRemainingTime
+                    status.withLock { $0.eta = remaining ?? -1 }
+                    info("Estimated Time Remaining = \(remaining.flatMap { secondsFormatter.string(from: NSNumber(value: $0)) } ?? "Unknown")")
+                case .stitchingIncomplete:
+                    warn("Received stitching incomplete message.")
+                @unknown default:
+                    warn("Output: unhandled message: \(output.localizedDescription)")
                 }
-
-                let modelAsset = MDLAsset(url: URL(filePath: outputPath))
-                modelAsset.loadTextures()
-
-                let objPath = URL(filePath: tempDir, directoryHint: .isDirectory).appending(component: "model").appending(component: "out.obj")
-                try? FileManager.default.createDirectory(at: objPath.deletingLastPathComponent(), withIntermediateDirectories: true)
-
-                do {
-                    try modelAsset.export(to: objPath)
-                } catch {
-                    err("Error while exporting: \(error)")
-                }
-
-                completed.withLock { completed in completed = true }
-
-                return
-            case .processingCancelled:
-                warn("Processing was cancelled.")
-                progress.withLock { $0 = 0.0 }
-                eta.withLock { $0 = 0.0 }
-                completed.withLock { $0 = false }
-                activeSession = nil
-                return
-            case let .requestError(request, error):
-                info("Request \(String(describing: request)) had an error: \(String(describing: error))")
-            case let .requestComplete(request, result):
-                info("Request complete: \(String(describing: request)) with result...")
-                switch result {
-                case let .modelFile(url):
-                    info("\tmodelFile available at url=\(url)")
-                default:
-                    warn("\tUnexpected result: \(String(describing: result))")
-                }
-            case let .requestProgress(_, fractionComplete):
-                progress.withLock { progress in progress = fractionComplete }
-                info("Progress = \(percentFormatter.string(from: NSNumber(value: fractionComplete)) ?? "")")
-            case .inputComplete:
-                info("Data ingestion is complete.  Beginning processing...")
-            case let .invalidSample(id, reason):
-                warn("Invalid Sample! id=\(id)  reason=\"\(reason)\"")
-            case let .skippedSample(id):
-                warn("Sample id=\(id) was skipped by processing.")
-            case .automaticDownsampling:
-                warn("Automatic downsampling was applied!")
-            case let .requestProgressInfo(_, requestInfo):
-                eta.withLock { eta in eta = requestInfo.estimatedRemainingTime ?? -1 }
-                info("Estimated Time Remaining = \(secondsFormatter.string(from: NSNumber(value: requestInfo.estimatedRemainingTime!)) ?? "Unknown")")
-            case .stitchingIncomplete:
-                warn("Received stitching incomplete message.")
-            @unknown default:
-                err("Output: unhandled message: \(output.localizedDescription)")
             }
+        } catch {
+            fail("The photogrammetry session stopped unexpectedly: \(error.localizedDescription)")
+            activeSession = nil
         }
     }
 
     withExtendedLifetime((session, logger)) {
+        try? FileManager.default.removeItem(atPath: outputPath)
+        try? FileManager.default.createDirectory(at: URL(filePath: outputPath).deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        let request = PhotogrammetrySession.Request.modelFile(url: URL(filePath: outputPath), detail: detail)
+        info("Using request: \(String(describing: request))")
+
+        start_time = Date()
+
         do {
-            try? FileManager.default.removeItem(atPath: outputPath)
-            try? FileManager.default.createDirectory(at: URL(filePath: outputPath).deletingLastPathComponent(), withIntermediateDirectories: true)
-
-            let request = PhotogrammetrySession.Request.modelFile(url: URL(filePath: outputPath), detail: detail)
-            info("Using request: \(String(describing: request))")
-
-            start_time = Date()
-
             try session.process(requests: [request])
         } catch {
-            print("Error occured: \(error)")
+            fail("Could not start processing: \(error.localizedDescription)")
+            activeSession = nil
         }
     }
 }

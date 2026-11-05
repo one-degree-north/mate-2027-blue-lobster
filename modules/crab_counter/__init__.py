@@ -11,7 +11,7 @@ import time
 import cv2
 import numpy as np
 
-from rovkit import Button, Module, Readout, Slider
+from rovkit import Button, Module, Readout, Slider, Status
 
 from .monkeyseecrab import MultiCrabTracker
 
@@ -25,7 +25,7 @@ class CrabCounter(Module):
     start_counter = Button("Start Counter")
     stop_counter = Button("Stop Counter")
     reset_counter = Button("Reset Counter")
-    status = Readout("Status", default="Stopped")
+    status = Status("Status", default="Stopped")
     visible = Readout("In frame", default=0)
     total = Readout("Total crabs", default=0)
     output_fps = Readout("Output FPS", unit="fps", default=0)
@@ -45,7 +45,7 @@ class CrabCounter(Module):
         self.tracker = MultiCrabTracker()
         if not self.tracker.load_training_image(REFERENCE_IMAGE):
             self.log.error("could not use the reference image %s", REFERENCE_IMAGE)
-            self.status = "Reference image failed to load"
+            self.update("status", ("Reference image failed to load", "error"))
         self.tracker.counting = False
 
     async def on_stop(self) -> None:
@@ -68,7 +68,7 @@ class CrabCounter(Module):
 
     async def _count(self) -> None:
         self.tracker.counting = True
-        self._update("status", "Waiting for video…")
+        self.update("status", ("Waiting for video…", "warn"))
         processed, since = 0, time.monotonic()
         try:
             async with self.frames() as frames:
@@ -78,21 +78,21 @@ class CrabCounter(Module):
                         try:
                             jpeg = await frames.next(NO_FRAME_AFTER)
                         except TimeoutError:
-                            self._update("status", "Waiting for video…")
+                            self.update("status", ("Waiting for video…", "warn"))
                             continue
-                        self._update("status", "Counting…")
+                        self.update("status", "Counting…")
                         out.push_jpeg(await asyncio.to_thread(self._process, jpeg))
                         self._show_counts()
                         processed += 1
                         if (elapsed := time.monotonic() - since) >= 1.0:
-                            self._update("output_fps", round(processed / elapsed, 1))
+                            self.update("output_fps", round(processed / elapsed, 1))
                             processed, since = 0, time.monotonic()
                 finally:
                     await out.close()
         finally:
             self.tracker.counting = False
-            self._update("status", "Stopped")
-            self._update("output_fps", 0)
+            self.update("status", "Stopped")
+            self.update("output_fps", 0)
 
     def _process(self, jpeg: bytes) -> bytes:
         """Runs in a worker thread: decode, detect and track, draw the boxes, re-encode."""
@@ -121,10 +121,5 @@ class CrabCounter(Module):
             await asyncio.gather(task, return_exceptions=True)
 
     def _show_counts(self) -> None:
-        self._update("total", self.tracker.counter)
-        self._update("visible", self.tracker.visible_count)
-
-    def _update(self, widget: str, value: object) -> None:
-        """Assign a readout only when it changed, so the hub isn't flooded at frame rate."""
-        if getattr(self, widget) != value:
-            setattr(self, widget, value)
+        self.update("total", self.tracker.counter)
+        self.update("visible", self.tracker.visible_count)

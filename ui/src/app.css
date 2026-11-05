@@ -6,6 +6,7 @@
   --accent: #4aa3ff;
   --chip: #2a323f;
   --ok: #2f9e5b;
+  --warn: #d9a441;
   --bad: #c0392b;
   color-scheme: dark;
 }
@@ -39,7 +40,8 @@ button:hover:not(:disabled) {
 }
 
 button:disabled,
-input:disabled {
+input:disabled,
+select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

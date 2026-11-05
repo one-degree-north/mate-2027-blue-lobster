@@ -91,6 +91,7 @@ async def test_the_supervisor_runs_sources_and_reports_them_under_sources(
     try:
         await eventually(lambda: "sources/cam/info" in seen)
         assert seen["sources/cam/status"].data["state"] == "running"
+        assert seen["modules/_index"].data == []  # a source has no panel to keep
         assert "modules/cam/status" not in seen
     finally:
         supervisor.stop()
@@ -301,3 +302,81 @@ def test_the_real_sources_build_their_pipelines() -> None:
             description.rstrip().endswith("fdsink fd=1") or "fdsink fd=1 sync=false" in description
         )
         assert "jpegenc" in description
+
+
+async def test_a_source_that_cannot_start_complains_once_not_every_check(
+    hub_url: str,
+    seen: dict[str, Message],
+    fake_gst: tuple[str, ...],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="module.fake")
+    stop, task, client = await run_source(
+        hub_url, fake_gst, retry_wait=0.03, problem=lambda self: "video file not found: x.mp4"
+    )
+    try:
+        await eventually(lambda: info_state(seen) == "error")
+        await asyncio.sleep(0.5)  # about sixteen more checks
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, TIMEOUT)
+        await client.close()
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert [r.getMessage() for r in errors] == ["video file not found: x.mp4"]
+    assert seen["sources/fake/info"].data["detail"] == "video file not found: x.mp4"
+
+
+async def test_a_source_with_nothing_to_do_is_idle_not_an_error(
+    hub_url: str,
+    seen: dict[str, Message],
+    fake_gst: tuple[str, ...],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="module.fake")
+    stop, task, client = await run_source(
+        hub_url, fake_gst, retry_wait=0.03, idle_reason=lambda self: "no clip chosen"
+    )
+    try:
+        await eventually(lambda: info_state(seen) == "idle")
+        await asyncio.sleep(0.2)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, TIMEOUT)
+        await client.close()
+    assert not [r for r in caplog.records if r.levelno >= 40]  # nothing at ERROR or above
+    assert seen["sources/fake/info"].data == {"state": "idle", "detail": "no clip chosen"}
+
+
+async def test_a_waiting_source_starts_once_the_problem_is_fixed(
+    hub_url: str, seen: dict[str, Message], fake_gst: tuple[str, ...]
+) -> None:
+    fixed = False
+    stop, task, client = await run_source(
+        hub_url,
+        fake_gst,
+        retry_wait=0.03,
+        problem=lambda self: None if fixed else "video file not found",
+    )
+    try:
+        await eventually(lambda: info_state(seen) == "error")
+        fixed = True
+        await eventually(lambda: info_state(seen) == "live")
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, TIMEOUT)
+        await client.close()
+
+
+async def test_a_pipeline_that_keeps_dying_is_restarted_more_and_more_slowly(
+    hub_url: str, fake_gst: tuple[str, ...], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_FRAMES", "0")
+    monkeypatch.setenv("FAKE_LINGER", "0")  # exits straight away, every time
+    stop, task, client = await run_source(hub_url, fake_gst, restart_delay=0.05)
+    try:
+        await asyncio.sleep(1.5)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, TIMEOUT)
+        await client.close()
+    assert 2 <= runs(tmp_path) <= 5  # a fixed 0.05 s pause would have restarted it ~8 times

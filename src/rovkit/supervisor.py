@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from .client import HubClient
-from .protocol import MODULE_ID_PATTERN, status_topic
+from .protocol import MODULE_ID_PATTERN, MODULE_INDEX_TOPIC, status_topic
 from .runner import HUB_URL_ENV, RELOAD_ENV
 
 log = logging.getLogger(__name__)
@@ -80,6 +80,8 @@ class Supervisor:
     async def run(self) -> None:
         """Run until :meth:`stop`. Children are terminated before this returns."""
         async with HubClient(self._hub_url) as hub, asyncio.TaskGroup() as group:
+            modules = [s.spec.id for s in self._states if s.spec.kind == "module"]
+            await hub.publish(MODULE_INDEX_TOPIC, modules, retain=True)
             for state in self._states:
                 group.create_task(self._supervise(state, hub), name=f"supervise-{state.spec.id}")
             if self._reload:

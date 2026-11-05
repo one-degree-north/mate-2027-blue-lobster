@@ -4,11 +4,22 @@ import os
 import shutil
 import time
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Literal
 
 import cv2
 
 DYLIB_PATH = os.path.join(os.path.dirname(__file__), "libPgm.dylib")
+
+
+class State(IntEnum):
+    """Mirrors RunState in pgm.swift. DONE, FAILED and CANCELLED all count as finished."""
+
+    IDLE = 0
+    RUNNING = 1
+    DONE = 2
+    FAILED = 3
+    CANCELLED = 4
 
 
 @dataclass
@@ -50,6 +61,12 @@ class _PgmModule:
         self.lib.get_eta.argtypes = []
         self.lib.get_eta.restype = ctypes.c_double
 
+        self.lib.get_state.argtypes = []
+        self.lib.get_state.restype = ctypes.c_int32
+
+        self.lib.get_error.argtypes = [ctypes.c_char_p, ctypes.c_int32]
+        self.lib.get_error.restype = ctypes.c_int32
+
         self.lib.stop_photogrammetry_session.argtypes = []
         self.lib.stop_photogrammetry_session.restype = None
 
@@ -81,6 +98,14 @@ class _PgmModule:
 
     def get_eta(self) -> float:
         return self.lib.get_eta()
+
+    def get_state(self) -> State:
+        return State(self.lib.get_state())
+
+    def get_error(self) -> str | None:
+        buffer = ctypes.create_string_buffer(2048)
+        length = self.lib.get_error(buffer, len(buffer))
+        return buffer.raw[:length].decode(errors="replace") if length else None
 
     def get_bounding_box(self, path: bytes) -> BoundingBox:
         min_x, min_y, min_z = ctypes.c_float(), ctypes.c_float(), ctypes.c_float()
@@ -216,7 +241,15 @@ class Photogrammetry:
     def get_eta(self) -> float:
         return self.lib.get_eta()
 
+    def get_state(self) -> State:
+        return self.lib.get_state()
+
+    def get_error(self) -> str | None:
+        """Why the last reconstruction failed, or None."""
+        return self.lib.get_error()
+
     def is_completed(self) -> bool:
+        """True once the run has finished: done, failed or cancelled (see get_state)."""
         return self.lib.is_completed()
 
     def get_bounding_box(self, scale_factor: float) -> BoundingBox:
@@ -319,6 +352,10 @@ if __name__ == "__main__":
             if photogrammetry.is_completed():
                 break
 
+        state = photogrammetry.get_state()
+        if state != State.DONE:
+            print(f"Reconstruction {state.name.lower()}: {photogrammetry.get_error() or 'no details'}")
+            raise SystemExit(1)
         print("Reconstruction complete!")
 
     print("Getting bounding box")

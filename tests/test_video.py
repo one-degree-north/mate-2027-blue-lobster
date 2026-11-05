@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 from collections.abc import AsyncIterator
 
 import aiohttp
@@ -100,3 +101,35 @@ async def test_video_stream_pushes_frames_from_a_thread(base: str) -> None:
             await stream.stop(task)
     with pytest.raises(ValueError):
         stream.push_jpeg(b"nope")
+
+
+async def test_a_dropped_ingest_connection_is_not_reported_as_bad_data(
+    base: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger="rovkit.video_relay"):
+        async with aiohttp.ClientSession() as session:
+            ws = await session.ws_connect(f"ws://{base}/video/main/ingest")
+            await ws.send_bytes(jpeg((255, 0, 0)))
+            await asyncio.sleep(0.05)
+            connection = ws._response.connection
+            assert connection is not None and connection.transport is not None
+            connection.transport.abort()  # a source killed mid-stream, no closing handshake
+            await asyncio.sleep(0.2)
+    assert not caplog.records  # a source that dies is normal, not a warning
+
+
+async def test_text_and_non_jpeg_binary_on_ingest_are_still_reported(
+    base: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="rovkit.video_relay"):
+        async with (
+            aiohttp.ClientSession() as session,
+            session.ws_connect(f"ws://{base}/video/main/ingest") as ws,
+        ):
+            await ws.send_str("hello")
+            await ws.send_bytes(b"not a jpeg")
+            await asyncio.sleep(0.1)
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 2
+    assert "TEXT" in messages[0] and "'main'" in messages[0]  # says which stream and what arrived
+    assert "BINARY" in messages[1]

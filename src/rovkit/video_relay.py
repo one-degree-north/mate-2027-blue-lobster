@@ -47,14 +47,19 @@ class VideoRelay:
         return self._streams.setdefault(name, _Stream())
 
     async def ingest(self, request: web.Request) -> web.StreamResponse:
+        name = request.match_info["name"]
         stream = self._stream(request)
         ws = web.WebSocketResponse(heartbeat=15, max_msg_size=MAX_FRAME_BYTES)
         await ws.prepare(request)
         async for msg in ws:
             if msg.type == WSMsgType.BINARY and msg.data.startswith(JPEG_MAGIC):
                 await stream.publish(msg.data)
+            elif msg.type == WSMsgType.ERROR:
+                log.warning("video ingest %r: connection error: %s", name, ws.exception())
             elif msg.type != WSMsgType.CLOSE:
-                log.warning("ignoring non-JPEG data on video ingest")
+                log.warning(
+                    "video ingest %r: ignoring a %s message that is not a JPEG", name, msg.type.name
+                )
         return ws
 
     async def frames(self, request: web.Request) -> web.StreamResponse:

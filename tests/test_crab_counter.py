@@ -55,13 +55,17 @@ async def test_start_counts_the_crab_and_stop_closes_everything(
             message = seen.get(f"modules/crab_counter/state/{widget}")
             return message.data if message else None
 
+        def status() -> Any:
+            message = seen.get("modules/crab_counter/state/status")
+            return message.data["text"] if message else None
+
         def listed() -> bool:
             message = seen.get("video/crab_counter/meta")
             return message is not None and message.data is not None
 
         module = load_module_class(MODULE)("crab_counter", client)
         task = asyncio.create_task(module._serve(stop))
-        await eventually(lambda: value("status") == "Stopped")
+        await eventually(lambda: status() == "Stopped")
         assert not listed()  # nothing is published until Start is pressed
 
         host = hub_url.removeprefix("ws://").removesuffix("/ws")
@@ -78,7 +82,7 @@ async def test_start_counts_the_crab_and_stop_closes_everything(
                 await ui.publish(cmd_topic("crab_counter", "start_counter"))
                 await eventually(lambda: value("total") == 1)  # counted once, not once per frame
                 await eventually(listed)
-                assert value("status") == "Counting…"
+                assert status() == "Counting…"
                 assert value("visible") == 1
 
                 # The annotated stream is a real JPEG other people can watch.
@@ -87,7 +91,7 @@ async def test_start_counts_the_crab_and_stop_closes_everything(
                     assert (await frames.next(TIMEOUT)).startswith(JPEG_MAGIC)
 
                 await ui.publish(cmd_topic("crab_counter", "stop_counter"))
-                await eventually(lambda: value("status") == "Stopped")
+                await eventually(lambda: status() == "Stopped")
                 await eventually(lambda: not listed())  # the stream leaves the dropdown
                 assert value("total") == 1  # stopping keeps the count
 
