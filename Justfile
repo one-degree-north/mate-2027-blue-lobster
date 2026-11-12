@@ -37,7 +37,7 @@ camera-sim feed="bars":
       ball)   src="videotestsrc is-live=true pattern=ball ! video/x-raw,width=1280,height=720,framerate=30/1" ;;
       *) echo "unknown feed '{{feed}}': use webcam, bars or ball" >&2; exit 1 ;;
     esac
-    exec gst-launch-1.0 $src ! videoconvert ! video/x-raw,format=I420 \
+    exec gst-launch-1.0 -v $src ! videoconvert ! video/x-raw,format=I420 \
       ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=5000 key-int-max=30 \
       ! rtph264pay pt=96 config-interval=1 ! udpsink host=127.0.0.1 port=5600
 
