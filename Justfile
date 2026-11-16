@@ -3,10 +3,12 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Install Python and UI dependencies
+# Install Python and UI dependencies exactly as locked, then build the photogrammetry library.
+# Needs the tools from ./setup-deps.sh.
 setup:
-    uv sync
-    pnpm --dir ui install
+    uv sync --frozen
+    pnpm --dir ui install --frozen-lockfile
+    just build-pgm
 
 # Hub + modules + sources (restart on save) and the Vite UI at http://localhost:5173; Ctrl-C stops both.
 # Extra arguments go to `rovkit run`, e.g. `just dev --source pattern_camera`.

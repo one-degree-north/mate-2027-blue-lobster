@@ -32,10 +32,10 @@ Modules read the stream named by `ROVKIT_SOURCE` (default `camera`). Run one sou
 ROVKIT_SOURCE=pattern just dev --source pattern_camera
 ```
 
-With the real camera: `brew install gstreamer`, then `just dev --source gst_camera`. To test
+With the real camera (GStreamer comes with `./setup-deps.sh`): `just dev --source gst_camera`. To test
 it without the bot, run `just camera-sim` in another terminal (color bars; `just camera-sim webcam` or `ball` for other feeds).
 
-The photogrammetry module needs its Swift library once: `just build-pgm` (macOS only).
+The photogrammetry module needs its Swift library once: `just setup` or `just build-pgm`.
 
 Photogrammetry takes one photo per `1 / rate` seconds (the sharpest frame of each interval),
 so the rate does not depend on the camera's fps. To get real sizes, scan an object of known
@@ -44,10 +44,25 @@ scale factor is then set for every later scan.
 
 ## Setup
 
+macOS only. From a fresh clone:
+
 ```sh
-uv sync                 # Python deps
-cd ui && pnpm install   # UI deps
+./setup-deps.sh   # system tools (safe to re-run)
+just setup        # project dependencies and the photogrammetry library
 ```
+
+`./setup-deps.sh` installs Homebrew if it is missing (it asks for your password on a fresh
+Mac), then:
+
+- from the `Brewfile`: `uv`, `fnm`, `pnpm`, GStreamer (tested with 1.28.x) and `just`
+- Node, at the major version in `.node-version`, through fnm
+
+It adds `eval "$(fnm env --use-on-cd)"` to `~/.zshrc` so the right Node is active in the
+project; open a new terminal before `just setup`.
+
+`just setup` installs the Python and UI packages exactly as pinned in `uv.lock` and
+`ui/pnpm-lock.yaml`, then builds the photogrammetry library (`just build-pgm` rebuilds it;
+it needs the Xcode Command Line Tools).
 
 ## Run
 

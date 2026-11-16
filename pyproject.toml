@@ -36,11 +36,11 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py312"
 # Copied unchanged from mate-26; not reformatted so they stay easy to diff against it.
-extend-exclude = ["modules/crab_counter/monkeyseecrab.py", "modules/photogrammetry/pgm.py"]
+# extend-exclude = ["modules/crab_counter/monkeyseecrab.py", "modules/photogrammetry/pgm.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
 
 [tool.ty.src]
 include = ["src", "tests", "modules", "sources"]
-exclude = ["modules/crab_counter/monkeyseecrab.py", "modules/photogrammetry/pgm.py"]
+# exclude = ["modules/crab_counter/monkeyseecrab.py", "modules/photogrammetry/pgm.py"]
