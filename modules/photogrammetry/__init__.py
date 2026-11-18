@@ -1,27 +1,39 @@
-"""Photogrammetry: Apple RealityKit (through ``pgm``), driven from the UI.
+"""Photogrammetry, driven from the UI.
 
 Start Photogrammetry opens the link to the camera and saves photos; Begin Reconstruction
 closes it and builds the 3D model. Calibrate sets the scale from an object of known size.
-macOS only: build the Swift library first (``just build-pgm``).
+
+The model is built by Apple RealityKit on macOS (through ``pgm``; build the Swift library first
+with ``just build-pgm``), and by COLMAP and OpenMVS on Linux with an NVIDIA GPU (``./setup-deps.sh``
+installs them). Both are used through the ``Engine`` interface.
 """
 
 import asyncio
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
 from rovkit import Button, Module, Number, Progress, Readout, Select, Slider, Status
 
 from .capture import Capture
-from .pgm import DYLIB_PATH, BoundingBox, Photogrammetry, State
+from .colmap_backend import ColmapPhotogrammetry, missing_tools
+from .engine import Detail, Engine
+from .pgm import DYLIB_PATH, BoundingBox, State
+from .pgm import Photogrammetry as RealityKitPhotogrammetry
 
 NO_FRAME_AFTER = 1.0  # seconds without a frame before the status says so
 POLL_SECONDS = 0.5  # how often reconstruction progress is read
 SCALE_MIN, SCALE_MAX = 1e-6, 1e6
 
-Detail = Literal[0, 1, 2, 3, 4]
+# The engine for this machine, and the model file it writes.
+MACOS = sys.platform == "darwin"
+Photogrammetry: Callable[..., Engine] = RealityKitPhotogrammetry if MACOS else ColmapPhotogrammetry
+MODEL_FILE = "output.usdz" if MACOS else "output.glb"
+
 DETAIL_LEVELS: dict[str, Detail] = {"preview": 0, "reduced": 1, "medium": 2, "full": 3, "raw": 4}
 DETAIL_LABELS = {
     "preview": "Preview (fastest)",
@@ -68,11 +80,25 @@ Phase = Literal["idle", "capturing", "reconstructing"]
 
 def unsupported_reason() -> str | None:
     """Why photogrammetry cannot run here, or None."""
-    if sys.platform != "darwin":
-        return "Photogrammetry needs macOS (RealityKit)"
-    if not os.path.exists(DYLIB_PATH):
-        return "libPgm.dylib is missing: run `just build-pgm`"
+    if MACOS:
+        if not os.path.exists(DYLIB_PATH):
+            return "libPgm.dylib is missing: run `just build-pgm`"
+    elif sys.platform != "linux":
+        return "Photogrammetry needs macOS or Linux"
+    elif missing := missing_tools():
+        return f"{', '.join(missing)} not found: run ./setup-deps.sh"
     return None
+
+
+def open_model(path: str) -> None:
+    """Show the finished model in the system's viewer."""
+    if MACOS:
+        subprocess.run(["open", "-a", "Preview", path], check=False)
+    elif shutil.which("wslpath") and shutil.which("explorer.exe"):  # WSL: open it in Windows
+        windows_path = subprocess.run(["wslpath", "-w", path], capture_output=True, text=True)
+        subprocess.run(["explorer.exe", windows_path.stdout.strip()], check=False)  # exits 1
+    else:
+        subprocess.run(["xdg-open", path], check=False)
 
 
 def measured_length(box: BoundingBox, axis: str) -> float:
@@ -94,7 +120,7 @@ class PhotogrammetryModule(Module):
     photos = Readout("Photos captured", default=0)
     progress = Progress("Reconstruction")
     eta = Readout("Time remaining", unit="s")
-    open_model = Button("Open Model in Preview")
+    open_model = Button("Open Model")
 
     # Scale: type a factor, or measure it from an object of known size.
     reference_length = Number(0, 100000, default=0, label="Reference length")
@@ -105,7 +131,7 @@ class PhotogrammetryModule(Module):
     size = Readout("Bounding box size")
     corners = Readout("Min → max corner")
 
-    pgm: Photogrammetry | None = None
+    pgm: Engine | None = None
     _phase: Phase = "idle"
     _capture: Capture | None = None
     _capture_task: asyncio.Task[None] | None = None
@@ -121,13 +147,13 @@ class PhotogrammetryModule(Module):
         self._set_phase("idle")
 
     @staticmethod
-    def _make_engine() -> Photogrammetry:
+    def _make_engine() -> Engine:
         return Photogrammetry(
             video_fps=30,  # only used by pgm's own frame counting, which capture.py replaces
             target_fps=2,
             detail=0,
             temp_dir=os.path.abspath("pgm-temp"),
-            output_path=os.path.abspath("output.usdz"),
+            output_path=os.path.abspath(MODEL_FILE),
         )
 
     async def on_stop(self) -> None:
@@ -189,7 +215,7 @@ class PhotogrammetryModule(Module):
 
     # -- reconstruction --------------------------------------------------------------------
 
-    async def _reconstruct(self, pgm: Photogrammetry) -> None:
+    async def _reconstruct(self, pgm: Engine) -> None:
         self.update("status", "Reconstructing…")
         self.update("progress", 0.0)
         try:
@@ -211,7 +237,7 @@ class PhotogrammetryModule(Module):
                 reason = pgm.get_error() or "no details"
                 self.update("status", (f"Reconstruction failed: {reason}", "error"))
         except asyncio.CancelledError:
-            pgm.stop_reconstruction()  # the module is stopping: don't leave RealityKit running
+            pgm.stop_reconstruction()  # the module is stopping: don't leave the engine running
             raise
         except Exception as error:
             self.update("status", (f"Reconstruction failed: {error}", "error"))
@@ -238,7 +264,7 @@ class PhotogrammetryModule(Module):
         if self.pgm is None or not self._model_exists():
             self.update("status", ("There is no model yet", "warn"))
             return
-        await asyncio.to_thread(subprocess.run, ["open", "-a", "Preview", self.pgm.output_path])
+        await asyncio.to_thread(open_model, self.pgm.output_path)
 
     async def on_get_bounding_box(self) -> None:
         if self.pgm is None or not self._model_exists():

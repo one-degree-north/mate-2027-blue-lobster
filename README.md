@@ -35,7 +35,10 @@ ROVKIT_SOURCE=pattern just dev --source pattern_camera
 With the real camera (GStreamer comes with `./setup-deps.sh`): `just dev --source gst_camera`. To test
 it without the bot, run `just camera-sim` in another terminal (color bars; `just camera-sim webcam` or `ball` for other feeds).
 
-The photogrammetry module needs its Swift library once: `just setup` or `just build-pgm`.
+The photogrammetry module builds the model with RealityKit on macOS (it needs its Swift library
+once: `just setup` or `just build-pgm`) and with COLMAP and OpenMVS on Linux with an NVIDIA GPU
+(installed by `./setup-deps.sh`). The result is `output.usdz` on macOS and a textured
+`output.glb` on Linux. COLMAP's log of the last run is `pgm-temp/colmap.log`.
 
 Photogrammetry takes one photo per `1 / rate` seconds (the sharpest frame of each interval),
 so the rate does not depend on the camera's fps. To get real sizes, scan an object of known
@@ -44,7 +47,7 @@ scale factor is then set for every later scan.
 
 ## Setup
 
-macOS only. From a fresh clone:
+macOS, or Ubuntu (including WSL 2). From a fresh clone:
 
 ```sh
 ./setup-deps.sh   # system tools (safe to re-run)
@@ -61,8 +64,23 @@ It adds `eval "$(fnm env --use-on-cd)"` to `~/.zshrc` so the right Node is activ
 project; open a new terminal before `just setup`.
 
 `just setup` installs the Python and UI packages exactly as pinned in `uv.lock` and
-`ui/pnpm-lock.yaml`, then builds the photogrammetry library (`just build-pgm` rebuilds it;
-it needs the Xcode Command Line Tools).
+`ui/pnpm-lock.yaml`, then, on macOS, builds the photogrammetry library (`just build-pgm`
+rebuilds it; it needs the Xcode Command Line Tools).
+
+### Ubuntu and WSL 2
+
+`./setup-deps.sh` uses apt and the tools' own installers instead of Homebrew, and also builds
+the photogrammetry tools from source: COLMAP (with CUDA, for the GPU) and OpenMVS (textures).
+That takes a long time the first time. Requirements:
+
+- An NVIDIA GPU with CUDA 12.8 or newer (the RTX 50 series needs it). On WSL, install the
+  driver on Windows only; `nvidia-smi` must work inside WSL before you run the script. The
+  script installs the CUDA toolkit, never a Linux driver.
+- On WSL, mirrored networking, or the bot's UDP video cannot reach the hub. In Windows put
+  `networkingMode=mirrored` under `[wsl2]` in `%UserProfile%\.wslconfig` and run `wsl --shutdown`.
+- Keep the repository in the Linux filesystem (`~/`), not under `/mnt/c`.
+
+COLMAP and OpenMVS are pinned by `COLMAP_REF` and `OPENMVS_REF` at the top of the script.
 
 ## Run
 

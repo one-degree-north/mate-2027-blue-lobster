@@ -18,6 +18,7 @@ ui/dist/
 *.dylib
 pgm-temp/
 output.usdz
+output.glb
 videos/
 
 # OS / editor

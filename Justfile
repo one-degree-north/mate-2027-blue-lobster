@@ -3,7 +3,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Install Python and UI dependencies exactly as locked, then build the photogrammetry library.
+# Install Python and UI dependencies exactly as locked, then build the photogrammetry library (macOS).
 # Needs the tools from ./setup-deps.sh.
 setup:
     uv sync --frozen
@@ -24,9 +24,15 @@ serve *args:
     pnpm --dir ui build
     uv run rovkit run {{args}}
 
-# Build the Swift library the photogrammetry module needs (macOS only)
+# Build the Swift library the photogrammetry module needs on macOS
+[macos]
 build-pgm:
     swiftc -emit-library -o modules/photogrammetry/libPgm.dylib modules/photogrammetry/pgm.swift
+
+# Nothing to build on Linux: photogrammetry uses COLMAP and OpenMVS, installed by ./setup-deps.sh
+[linux]
+build-pgm:
+    @echo "nothing to build: photogrammetry uses COLMAP and OpenMVS (./setup-deps.sh)"
 
 # Send a fake bot feed to the camera source on UDP 5600 (needs GStreamer).
 # feed: bars = static colour bars (default), ball = a moving ball, webcam = your Mac's camera

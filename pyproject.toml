@@ -10,6 +10,7 @@ dependencies = [
     "opencv-python>=4.13.0.90,<5",
     "pillow>=13.0.0",
     "pydantic>=2.8",
+    "trimesh>=5.2.1",
 ]
 
 [project.scripts]
